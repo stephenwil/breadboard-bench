@@ -4,7 +4,8 @@
   "description": "MCP server that lets Claude lay out and check breadboard circuits, with a live browser viewer",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
   },
   "author": "",
   "license": "ISC",
