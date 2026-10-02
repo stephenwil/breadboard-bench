@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Breadboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --mat:#B7C6C2; --mat-dot:rgba(25,45,45,.11); --ink:#1B2829; --ink-soft:#4A5C5D;
+  --panel:#E6ECEA; --panel-line:#C2CDCA; --copper:#A65D27;
+  --err:#B3261E; --warn:#9A6200; --info:#4A5C5D; color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --mat:#1D2B2C; --mat-dot:rgba(255,255,255,.05); --ink:#E2EAE8; --ink-soft:#9DAFAD;
+    --panel:#263738; --panel-line:#3A5052; --copper:#D88A4C; --err:#FF8A80; --warn:#F2B54A; --info:#9DAFAD; color-scheme:dark; }
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background:var(--mat);background-image:radial-gradient(var(--mat-dot) 1px,transparent 1.3px);background-size:14px 14px;color:var(--ink);font-family:'Barlow',system-ui,-apple-system,'Segoe UI',sans-serif}
+header{display:flex;align-items:baseline;gap:14px;padding:12px 18px 6px;flex-wrap:wrap}
+h1{font-family:'Barlow Semi Condensed','Barlow',system-ui,sans-serif;font-weight:600;font-size:1.35rem;margin:0}
+.meta{color:var(--ink-soft);font-size:.95rem}
+.live{margin-left:auto;font-size:.88rem;color:var(--ink-soft);display:flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:50%;background:#8A8F96}
+.live.on .dot{background:#2E9E46;box-shadow:0 0 6px rgba(46,158,70,.7)}
+.toolbar{display:flex;align-items:center;gap:8px;padding:4px 18px 8px;flex-wrap:wrap}
+.btn{font:inherit;font-size:.92rem;font-weight:500;padding:6px 12px;border-radius:999px;border:1px solid var(--panel-line);background:var(--panel);color:var(--ink);cursor:pointer}
+.btn[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.danger{color:var(--err);border-color:currentColor}
+.sep{width:1px;height:22px;background:var(--panel-line);margin:0 4px}
+.swatch{width:24px;height:24px;border-radius:50%;border:2px solid var(--panel);box-shadow:0 0 0 1px var(--panel-line);cursor:pointer;padding:0}
+.swatch[aria-pressed="true"]{box-shadow:0 0 0 2px var(--ink)}
+.hint{color:var(--ink-soft);font-size:.9rem;margin:0}
+.boardwrap{overflow-x:auto;padding:0 12px;position:relative}
+#board{display:block;min-width:900px;width:100%;height:auto;margin:0 auto;touch-action:none;user-select:none;-webkit-user-select:none}
+#board.wiring{cursor:crosshair}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.empty span{background:var(--panel);border:1px solid var(--panel-line);border-radius:10px;padding:10px 16px}
+main{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;padding:10px 18px 18px}
+@media (max-width:860px){main{grid-template-columns:1fr}}
+.side{display:flex;flex-direction:column;gap:14px;min-width:0}
+section{background:var(--panel);border:1px solid var(--panel-line);border-radius:12px;padding:12px 14px;min-width:0}
+h2{font-size:.8rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 8px}
+.checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;max-height:420px;overflow:auto}
+.checks li{display:flex;gap:10px;align-items:flex-start;padding:7px 8px;border-radius:8px;font-size:.93rem;line-height:1.4}
+.checks li:hover{background:color-mix(in srgb,var(--copper) 10%,transparent)}
+.badge{flex:none;font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;border:1px solid currentColor;margin-top:2px;min-width:62px;text-align:center}
+.error .badge{color:var(--err)} .warning .badge{color:var(--warn)} .info .badge{color:var(--info)}
+.big{font-family:'Barlow Semi Condensed','Barlow',system-ui,sans-serif;font-size:1.15rem;font-weight:600;margin:0 0 6px}
+.small{font-size:.93rem;line-height:1.55;color:var(--ink-soft);margin:0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+label.prop{display:flex;gap:8px;align-items:center;font-size:.92rem}
+select{font:inherit;font-size:.9rem;padding:4px 8px;border-radius:8px;border:1px solid var(--panel-line);background:var(--mat);color:var(--ink)}
+.toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,10px);max-width:min(92vw,560px);background:var(--ink);color:var(--panel);padding:10px 16px;border-radius:10px;font-size:.93rem;line-height:1.4;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+kbd{font-family:inherit;font-size:.8rem;border:1px solid var(--panel-line);border-radius:4px;padding:0 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Breadboard</h1>
+  <span class="meta" id="meta"></span>
+  <span class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></span>
+</header>
+<div class="toolbar">
+  <button class="btn" id="t-select" aria-pressed="true">Select</button>
+  <button class="btn" id="t-wire" aria-pressed="false">Wire</button>
+  <span id="swatches" style="display:flex;gap:6px"></span>
+  <span class="sep"></span>
+  <button class="btn" id="undo" disabled>Undo</button>
+  <button class="btn" id="redo" disabled>Redo</button>
+  <span class="hint" id="hint">Drag parts and wire ends to move them. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.</span>
+</div>
+<div class="boardwrap">
+  <svg id="board" role="img" aria-label="Breadboard layout">
+    <defs><filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3"/></filter></defs>
+    <g id="L-board"></g><g id="L-zone"></g><g id="L-body"></g><g id="L-wires"></g><g id="L-pins"></g><g id="L-hl"></g><g id="L-ui"></g>
+  </svg>
+  <div class="empty" id="empty" hidden><span>Waiting for a design. Ask Claude to lay out a circuit.</span></div>
+</div>
+<main>
+  <section><h2 id="checks-title">Checks</h2><ul class="checks" id="checks"></ul></section>
+  <div class="side">
+    <section><h2>Selection</h2><div id="sel"><p class="small">Click a part or wire to edit it.</p></div></section>
+    <section><h2>Net</h2><div id="net"><p class="small">Hover over a hole, pin or wire to see what it connects to.</p></div></section>
+  </div>
+</main>
+<div class="toast" id="toast" role="status"></div>
+<script>
+(() => {
+'use strict';
+const P = 16, MX = 40;
+const COLORS = {red:'#D2302C',black:'#2B2B2B',orange:'#EE7B22',yellow:'#E8B81E',green:'#2E9E46',blue:'#2C6BD6',purple:'#7D3FB8',white:'#F1F1EE',grey:'#8A8F96'};
+const LED_FILL = {red:'#D8322B',green:'#2DA84A',yellow:'#E9B51C',blue:'#2E66D8',white:'#E4E8EE'};
+const ROW_Y = {a:0,b:1,c:2,d:3,e:4,f:7,g:8,h:9,i:10,j:11}, RAIL_Y = {'T-':-3.5,'T+':-2.5,'B+':13.5,'B-':14.5};
+const $ = (s) => document.querySelector(s);
+const svg = $('#board'), L = {board:$('#L-board'), zone:$('#L-zone'), body:$('#L-body'), wires:$('#L-wires'), pins:$('#L-pins'), hl:$('#L-hl'), ui:$('#L-ui')};
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let state = null, boardKey = '', minY = 0, holeXY = new Map(), holeAt = new Map(), occupied = new Set();
+let tool = 'select', wireColor = 'green', wireStart = null, sel = null, drag = null;
+
+const X = (c) => MX + (c - 1) * P;
+const Y = (y) => 26 + (y - minY) * P;
+
+// ---------- board ----------
+function drawBoards(){
+  const bs = state.boards, maxCols = Math.max(...bs.map((b) => b.cols));
+  minY = bs[0].oy + bs[0].top;
+  const last = bs[bs.length - 1], W = MX * 2 + (maxCols - 1) * P, H = Y(last.oy + last.bottom) + 26;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const t = (x, y, s, fill, size, w = 500) => `<text x="${x}" y="${y}" fill="${fill}" font-size="${size}" font-weight="${w}" text-anchor="middle" dominant-baseline="central" font-family="Barlow,system-ui,sans-serif">${s}</text>`;
+  let s = '';
+  for (const b of bs){
+    const bw = MX * 2 + (b.cols - 1) * P - 12, y0 = Y(b.oy + b.top), y1 = Y(b.oy + b.bottom);
+    s += `<rect x="6" y="${y0}" width="${bw}" height="${y1 - y0}" rx="10" fill="#EEEBE2" stroke="#CDC8B7" stroke-width="1.5"/>`;
+    if (b.rails.includes('T+')) s += `<rect x="6" y="${y0}" width="${bw}" height="${Y(b.oy - 1.2) - y0}" rx="10" fill="#E6E2D6"/>`;
+    if (b.rails.includes('B+')) s += `<rect x="6" y="${Y(b.oy + 12.2)}" width="${bw}" height="${y1 - Y(b.oy + 12.2)}" rx="10" fill="#E6E2D6"/>`;
+    s += `<rect x="14" y="${Y(b.oy + 5.2)}" width="${bw - 16}" height="${P * 0.6}" rx="2" fill="#DAD5C6"/>`;
+    const rl = (y, c) => s += `<line x1="${X(1) - 8}" y1="${Y(b.oy + y)}" x2="${X(b.cols) + 8}" y2="${Y(b.oy + y)}" stroke="${c}" stroke-width="2" opacity=".85"/>`;
+    if (b.rails.includes('T+')) { rl(-4.2, '#2C5DA8'); rl(-1.8, '#C8322E'); }
+    if (b.rails.includes('B+')) { rl(12.8, '#C8322E'); rl(15.2, '#2C5DA8'); }
+    for (const r of b.rails){ const c = r[1] === '+' ? '#C8322E' : '#2C5DA8', g = r[1] === '+' ? '+' : '−'; s += t(20, Y(b.oy + RAIL_Y[r]), g, c, 14, 600) + t(X(b.cols) + 20, Y(b.oy + RAIL_Y[r]), g, c, 14, 600); }
+    for (const [r, y] of Object.entries(ROW_Y)) s += t(20, Y(b.oy + y), r, '#8B8676', 10) + t(X(b.cols) + 20, Y(b.oy + y), r, '#8B8676', 10);
+    for (let c = 1; c <= b.cols; c++) if (c === 1 || c % 5 === 0) s += (b.rails.includes('T+') ? t(X(c), Y(b.oy - 1.25), c, '#8B8676', 9) : '') + (b.rails.includes('B+') ? t(X(c), Y(b.oy + 12.25), c, '#8B8676', 9) : '');
+    if (bs.length > 1) s += t(X(b.cols) - 30, Y(b.oy + 5.5), `board ${b.index}`, '#A39E8E', 9, 600);
+  }
+  for (const [id] of state.holes){ const p = holeXY.get(id); s += `<rect x="${p.x - 3}" y="${p.y - 3}" width="6" height="6" rx="1.4" fill="#3D3B36"/>`; }
+  L.board.innerHTML = s;
+}
+
+// ---------- parts ----------
+const txt = (x, y, s, fill, size, extra = '') => `<text x="${x}" y="${y}" fill="${fill}" font-size="${size}" font-weight="600" text-anchor="middle" dominant-baseline="central" font-family="Barlow Semi Condensed,Barlow,system-ui,sans-serif" ${extra}>${esc(s)}</text>`;
+function partSVG(p){
+  const isSel = sel && sel.type === 'part' && sel.id === p.id;
+  let s = `<g data-part="${esc(p.id)}">`;
+  if (p.body){
+    const b = p.body, x0 = X(b.c0), x1 = X(b.c1), y0 = Y(b.y0), y1 = Y(b.y1), w = x1 - x0, h = y1 - y0, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    if (isSel) s += `<rect x="${x0 - 5}" y="${y0 - 5}" width="${w + 10}" height="${h + 10}" rx="9" fill="none" stroke="#B8652A" stroke-width="2.5" stroke-dasharray="6 4"/>`;
+    if (p.kind === 'dual-header'){
+      s += `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" rx="6" fill="#1F232B" stroke="#0E1014"/>`;
+      const left = b.pin1End === 'left', canW = Math.min(w * 0.4, 9 * P), canX = left ? x0 + 1.4 * P : x1 - 1.4 * P - canW;
+      s += `<rect x="${canX}" y="${y0 + 1.8 * P}" width="${canW}" height="${h - 3.6 * P}" rx="3" fill="#B9BEC5" stroke="#8E949C"/>`;
+      s += txt(canX + canW / 2, cy, p.short, '#4B5058', 12);
+      const usbX = left ? x1 - 4 : x0 - 10;
+      s += `<rect x="${usbX}" y="${cy - 26}" width="14" height="18" rx="2" fill="#C2C6CC"/><rect x="${usbX}" y="${cy + 8}" width="14" height="18" rx="2" fill="#C2C6CC"/>`;
+      const tx = left ? (canX + canW + x1) / 2 : (x0 + canX) / 2;
+      s += txt(tx, cy - 8, p.id, '#E8ECF2', 15) + txt(tx, cy + 12, `power: ${p.props.power}`, '#A9B1BD', 10);
+      for (const pin of p.pins){ const q = holeXY.get(pin.hole), dy = q.y < cy ? 1 : -1; s += txt(q.x, q.y + dy * 11, pin.label, pin.role === 'nc' ? '#6B7280' : '#CDD3DC', 7); }
+    } else if (p.kind === 'single-header'){
+      const fill = p.short === 'OLED' ? '#1C2E4A' : '#4E2A80';
+      s += `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" rx="4" fill="${fill}" stroke="rgba(0,0,0,.4)"/>`;
+      const q0 = holeXY.get(p.pins[0].hole), up = q0.y > cy;
+      s += txt(cx, up ? y0 + 9 : y1 - 9, `${p.id} ${p.short}`, '#EEF0FA', 9.5);
+      for (const pin of p.pins){ const q = holeXY.get(pin.hole); s += txt(q.x, up ? y1 - 7 : y0 + 7, pin.label, '#EEF0FA', 6.5); }
+    } else if (p.kind === 'rail-module'){
+      s += `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" rx="6" fill="#22334F" fill-opacity=".93" stroke="#111B2B"/>`;
+      s += `<rect x="${cx - 12}" y="${cy - 30}" width="24" height="16" rx="3" fill="#2B2B2B"/><circle cx="${cx}" cy="${cy + 6}" r="7" fill="#C2C6CC"/>`;
+      s += txt(cx, y0 + 50, p.id, '#DCE4F2', 12) + txt(cx, y0 + 80, `top ${p.props.top}`, '#FFB4A8', 9) + txt(cx, y1 - 70, `bottom ${p.props.bottom}`, '#FFB4A8', 9) + txt(cx, cy + 24, 'PSU', '#A9B6CC', 9);
+    } else if (p.kind === 'tactile'){
+      s += `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" rx="3" fill="#2E2F33"/><circle cx="${cx}" cy="${cy}" r="${Math.min(w, h) * 0.28}" fill="#151618"/>` + txt(cx, y1 + 9, p.id, '#5B6466', 9);
+    }
+  }
+  if (p.kind === 'two-lead'){
+    const A = holeXY.get(p.pins[0].hole), B = holeXY.get(p.pins[1].hole), mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2, ang = Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI;
+    s += `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="#A7AAAE" stroke-width="2"/>`;
+    s += `<g transform="translate(${mx} ${my}) rotate(${ang})">`;
+    if (isSel) s += `<rect x="-17" y="-11" width="34" height="22" rx="7" fill="none" stroke="#B8652A" stroke-width="2" stroke-dasharray="5 4"/>`;
+    if (p.type === 'led') s += `<circle r="7.5" fill="${LED_FILL[p.props.color] || '#D8322B'}" stroke="rgba(0,0,0,.35)"/><line x1="5.8" y1="-4.6" x2="5.8" y2="4.6" stroke="rgba(0,0,0,.45)" stroke-width="1.5"/><ellipse cx="-2.3" cy="-2.8" rx="2.3" ry="1.5" fill="#fff" opacity=".5"/>`;
+    else s += `<rect x="-13" y="-5" width="26" height="10" rx="5" fill="#D6C29A" stroke="rgba(0,0,0,.25)"/>`;
+    s += `<rect x="-15" y="-10" width="30" height="20" fill="#000" fill-opacity="0"/></g>`;
+  }
+  return s + '</g>';
+}
+function wirePath(A, B){
+  const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1, k = Math.min(len * 0.14, 26);
+  return `M${A.x} ${A.y} Q${(A.x + B.x) / 2 - dy / len * k} ${(A.y + B.y) / 2 + dx / len * k} ${B.x} ${B.y}`;
+}
+function wireSVG(w){
+  const A = holeXY.get(w.from), B = holeXY.get(w.to); if (!A || !B) return '';
+  const d = wirePath(A, B), c = COLORS[w.color] || COLORS.green, isSel = sel && sel.type === 'wire' && sel.id === w.id;
+  let s = `<g data-wire="${esc(w.id)}" data-net="${w.net ?? ''}">`;
+  if (isSel) s += `<path d="${d}" stroke="#B8652A" stroke-width="11" fill="none" stroke-linecap="round" opacity=".45"/>`;
+  s += `<path d="${d}" stroke="rgba(0,0,0,.3)" stroke-width="6" fill="none" stroke-linecap="round" transform="translate(.8 1.5)"/><path d="${d}" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round"/>`;
+  s += `<circle cx="${A.x}" cy="${A.y}" r="2" fill="#B5B8BC"/><circle cx="${B.x}" cy="${B.y}" r="2" fill="#B5B8BC"/><path d="${d}" stroke="#000" stroke-opacity="0" stroke-width="14" fill="none" pointer-events="stroke"/>`;
+  if (isSel) for (const [end, q] of [['from', A], ['to', B]]) s += `<circle data-handle="${end}" cx="${q.x}" cy="${q.y}" r="8" fill="#B8652A" fill-opacity=".25" stroke="#B8652A" stroke-width="2"/>`;
+  return s + '</g>';
+}
+
+// ---------- render ----------
+function render(){
+  if (!state) return;
+  holeXY = new Map(); holeAt = new Map();
+  const key = JSON.stringify(state.boards);
+  if (key !== boardKey){ const bs = state.boards; minY = bs[0].oy + bs[0].top; }
+  for (const [id, col, y] of state.holes){ holeXY.set(id, { x: X(col), y: Y(y), col, gy: y }); holeAt.set(`${col}|${Math.round(y * 10)}`, id); }
+  if (key !== boardKey){ drawBoards(); boardKey = key; }
+  occupied = new Set([...state.parts.flatMap((p) => p.pins.map((x) => x.hole)), ...state.wires.flatMap((w) => [w.from, w.to])]);
+  if (sel && !(sel.type === 'part' ? state.parts.some((p) => p.id === sel.id) : state.wires.some((w) => w.id === sel.id))) sel = null;
+  $('#title').textContent = state.name || 'Breadboard';
+  $('#meta').textContent = `${state.boards.length > 1 ? `${state.boards.length} boards` : (state.boards[0].cols === 63 ? 'Full-size board' : 'Half-size board')} · ${state.summary}`;
+  L.zone.innerHTML = state.parts.flatMap((p) => p.overhang.map((h) => { const q = holeXY.get(h); return q ? `<rect x="${q.x - 6}" y="${q.y - 6}" width="12" height="12" rx="2" fill="#22334F" opacity=".1"/>` : ''; })).join('');
+  L.body.innerHTML = state.parts.map(partSVG).join('');
+  L.wires.innerHTML = state.wires.map(wireSVG).join('');
+  L.pins.innerHTML = state.parts.filter((p) => p.kind !== 'two-lead').flatMap((p) => p.pins.map((pin) => { const q = holeXY.get(pin.hole); return `<rect x="${q.x - 3.5}" y="${q.y - 3.5}" width="7" height="7" rx="1.2" fill="${pin.role === 'nc' ? '#7A7468' : '#D4A84A'}" stroke="#8C6A22" stroke-width=".8" pointer-events="none"/>`; })).join('');
+  $('#empty').hidden = state.parts.length > 0 || state.wires.length > 0;
+  const n = {error:0, warning:0, info:0}; state.checks.forEach((c) => n[c.level]++);
+  $('#checks-title').textContent = `Checks: ${n.error} error${n.error === 1 ? '' : 's'}, ${n.warning} warning${n.warning === 1 ? '' : 's'}`;
+  $('#checks').innerHTML = state.checks.length
+    ? state.checks.map((c, i) => `<li class="${c.level}" data-check="${i}"><span class="badge">${c.level === 'info' ? 'note' : c.level}</span><span>${esc(c.message)}</span></li>`).join('')
+    : '<li class="info"><span class="badge">ok</span><span>No problems found.</span></li>';
+  $('#undo').disabled = !state.canUndo; $('#redo').disabled = !state.canRedo;
+  $('#swatches').innerHTML = (state.colors || Object.keys(COLORS)).map((c) => `<button class="swatch" data-color="${c}" style="background:${COLORS[c]}" aria-label="${c} wire" aria-pressed="${c === wireColor}"></button>`).join('');
+  renderSelection(); drawUI(); highlight(null);
+}
+function renderSelection(){
+  const box = $('#sel');
+  if (!sel){ box.innerHTML = '<p class="small">Click a part or wire to edit it.</p>'; return; }
+  if (sel.type === 'wire'){
+    const w = state.wires.find((x) => x.id === sel.id);
+    box.innerHTML = `<p class="big">Wire ${esc(w.id)}</p><p class="small">${esc(w.from)} → ${esc(w.to)}. Drag an end to move it.</p>
+      <div class="row">${Object.keys(COLORS).map((c) => `<button class="swatch" data-wirecolor="${c}" style="background:${COLORS[c]}" aria-label="${c}" aria-pressed="${c === w.color}"></button>`).join('')}</div>
+      <div class="row"><button class="btn danger" data-act="delete">Delete wire</button></div>`;
+    return;
+  }
+  const p = state.parts.find((x) => x.id === sel.id);
+  const props = Object.entries(p.propSpec || {}).map(([k, opts]) => `<label class="prop">${esc(k)} <select data-prop="${esc(k)}">${opts.map((o) => `<option${o === p.props[k] ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select></label>`).join('');
+  const canRotate = ['dual-header', 'single-header'].includes(p.kind);
+  box.innerHTML = `<p class="big">${esc(p.id)} · ${esc(p.short)}</p><p class="small">${esc(p.type)} at ${esc(p.at)}${p.to ? ` → ${esc(p.to)}` : ''}${p.rotation ? ', rotated 180' : ''}</p>
+    ${props ? `<div class="row">${props}</div>` : ''}
+    <div class="row">${canRotate ? '<button class="btn" data-act="rotate">Rotate</button>' : ''}<button class="btn danger" data-act="delete">Delete part</button></div>`;
+}
+function drawUI(){
+  let s = '';
+  if (wireStart){ const q = holeXY.get(wireStart); s += `<circle cx="${q.x}" cy="${q.y}" r="8" fill="none" stroke="${COLORS[wireColor]}" stroke-width="3"/>`; }
+  L.ui.innerHTML = s;
+}
+function ring(holes, color){ return holes.map((h) => { const q = holeXY.get(h); return q ? `<rect x="${q.x - 6.5}" y="${q.y - 6.5}" width="13" height="13" rx="3" fill="${color}" fill-opacity=".16" stroke="${color}" stroke-width="2"/>` : ''; }).join(''); }
+function highlight(t){
+  if (!state || !t){ L.hl.innerHTML = ''; return; }
+  if (t.net !== undefined){
+    L.hl.innerHTML = ring(Object.entries(state.holeNet).filter(([, n]) => n === t.net).map(([h]) => h), '#2F8F6B');
+    const net = state.nets[t.net];
+    $('#net').innerHTML = `<p class="big">${esc(net.name)}${net.volts !== null ? ` · ${net.volts} V` : ''}</p><p class="small">${net.pins.length ? net.pins.map(esc).join('<br>') : 'Only wires on this net.'}</p>`;
+  } else if (t.check !== undefined){
+    const c = state.checks[t.check];
+    L.hl.innerHTML = ring(c.holes || [], c.level === 'error' ? '#D3352B' : c.level === 'warning' ? '#D99A16' : '#6B7C7D');
+  }
+}
+
+// ---------- editing ----------
+let toastTimer;
+function toast(m){ const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 4500); }
+async function op(body){
+  try {
+    const r = await fetch('/api/op', { method: 'POST', headers: { 'content-type': 'application/json', 'x-breadboard': '1' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!j.ok) toast(j.error || 'That edit failed.');
+    return j.ok;
+  } catch { toast('Lost connection to the server.'); return false; }
+}
+function svgPoint(e){ const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); }
+function nearestHole(e){
+  const p = svgPoint(e); let best = null, bd = P * 0.6;
+  for (const [id, q] of holeXY){ const d = Math.max(Math.abs(q.x - p.x), Math.abs(q.y - p.y)); if (d < bd){ bd = d; best = id; } }
+  return best;
+}
+function shiftHole(id, dc, dy){
+  const q = holeXY.get(id); if (!q) return null;
+  return holeAt.get(`${q.col + dc}|${Math.round((q.gy + dy) * 10)}`) || null;
+}
+function newAnchor(p, dc, dy){
+  if (p.kind === 'rail-module'){
+    const m = /^(?:(\d):)?(\d+)$/.exec(p.at); const col = +m[2] + dc;
+    return { at: (m[1] ? m[1] + ':' : '') + col };
+  }
+  const at = shiftHole(p.at, dc, dy); if (!at) return null;
+  if (p.kind === 'two-lead'){ const to = shiftHole(p.to, dc, dy); return to ? { at, to } : null; }
+  return { at };
+}
+
+svg.addEventListener('pointerdown', (e) => {
+  if (!state || e.button > 0) return;
+  if (tool === 'wire'){
+    const h = nearestHole(e); if (!h) return;
+    if (!wireStart){ if (occupied.has(h)) return toast('That hole already has a lead in it.'); wireStart = h; drawUI(); }
+    else if (h === wireStart){ wireStart = null; drawUI(); }
+    else { const from = wireStart; wireStart = null; drawUI(); op({ op: 'add_wire', from, to: h, color: wireColor }); }
+    return;
+  }
+  const handle = e.target.closest('[data-handle]'), wg = e.target.closest('[data-wire]'), pg = e.target.closest('[data-part]');
+  if (handle && wg){ drag = { kind: 'end', id: wg.dataset.wire, end: handle.dataset.handle, start: svgPoint(e), hole: null }; svg.setPointerCapture(e.pointerId); return; }
+  if (pg){
+    sel = { type: 'part', id: pg.dataset.part };
+    drag = { kind: 'part', id: pg.dataset.part, start: svgPoint(e), dc: 0, dy: 0, el: null };
+    svg.setPointerCapture(e.pointerId); render();
+    drag.el = L.body.querySelector(`[data-part="${CSS.escape(drag.id)}"]`);
+    return;
+  }
+  if (wg){ sel = { type: 'wire', id: wg.dataset.wire }; render(); return; }
+  if (sel){ sel = null; render(); }
+});
+svg.addEventListener('pointermove', (e) => {
+  if (!state) return;
+  if (drag && drag.kind === 'part'){
+    const p = svgPoint(e), part = state.parts.find((x) => x.id === drag.id);
+    drag.dc = Math.round((p.x - drag.start.x) / P);
+    drag.dy = part.kind === 'rail-module' ? 0 : Math.round((p.y - drag.start.y) / P);
+    if (drag.el) drag.el.setAttribute('transform', `translate(${drag.dc * P} ${drag.dy * P})`);
+    L.pins.style.opacity = drag.dc || drag.dy ? 0.25 : 1;
+    return;
+  }
+  if (drag && drag.kind === 'end'){
+    const h = nearestHole(e); drag.hole = h;
+    const w = state.wires.find((x) => x.id === drag.id), other = holeXY.get(drag.end === 'from' ? w.to : w.from);
+    L.ui.innerHTML = h ? `<path d="${wirePath(other, holeXY.get(h))}" stroke="${COLORS[w.color]}" stroke-width="4" fill="none" stroke-dasharray="6 4" stroke-linecap="round"/>` : '';
+    return;
+  }
+  const wg = e.target.closest('[data-wire]');
+  if (wg && wg.dataset.net !== '') return highlight({ net: +wg.dataset.net });
+  const h = nearestHole(e);
+  if (h && state.holeNet[h] !== undefined) highlight({ net: state.holeNet[h] }); else highlight(null);
+});
+async function endDrag(){
+  const d = drag; drag = null; L.pins.style.opacity = 1;
+  if (!d) return;
+  if (d.kind === 'part'){
+    if (!d.dc && !d.dy) return;
+    const p = state.parts.find((x) => x.id === d.id), next = newAnchor(p, d.dc, d.dy);
+    if (!next){ toast('There are no holes there.'); render(); return; }
+    if (!(await op({ op: 'move_part', id: p.id, ...next }))) render();
+  } else if (d.kind === 'end'){
+    L.ui.innerHTML = '';
+    const w = state.wires.find((x) => x.id === d.id);
+    if (d.hole && d.hole !== w[d.end]) { if (!(await op({ op: 'move_wire_end', id: d.id, end: d.end, to: d.hole }))) render(); }
+  }
+}
+svg.addEventListener('pointerup', endDrag);
+svg.addEventListener('pointercancel', endDrag);
+svg.addEventListener('pointerleave', () => { if (!drag) highlight(null); });
+$('#checks').addEventListener('pointerover', (e) => { const li = e.target.closest('[data-check]'); if (li) highlight({ check: +li.dataset.check }); });
+$('#checks').addEventListener('pointerleave', () => highlight(null));
+
+function setTool(t){ tool = t; wireStart = null; $('#t-select').setAttribute('aria-pressed', t === 'select'); $('#t-wire').setAttribute('aria-pressed', t === 'wire'); svg.classList.toggle('wiring', t === 'wire'); $('#hint').innerHTML = t === 'wire' ? 'Click two holes to add a wire. <kbd>Esc</kbd> cancels.' : 'Drag parts and wire ends to move them. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.'; drawUI(); }
+$('#t-select').onclick = () => setTool('select');
+$('#t-wire').onclick = () => setTool('wire');
+$('#swatches').addEventListener('click', (e) => { const b = e.target.closest('[data-color]'); if (b){ wireColor = b.dataset.color; render(); } });
+$('#undo').onclick = () => op({ op: 'undo' });
+$('#redo').onclick = () => op({ op: 'redo' });
+$('#sel').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act],[data-wirecolor]'); if (!b || !sel) return;
+  if (b.dataset.wirecolor) return op({ op: 'set_wire_color', id: sel.id, color: b.dataset.wirecolor });
+  if (b.dataset.act === 'delete') return op({ op: sel.type === 'wire' ? 'remove_wire' : 'remove_part', id: sel.id });
+  if (b.dataset.act === 'rotate'){ const p = state.parts.find((x) => x.id === sel.id); return op({ op: 'move_part', id: p.id, rotation: p.rotation === 180 ? 0 : 180 }); }
+});
+$('#sel').addEventListener('change', (e) => { const s = e.target.closest('[data-prop]'); if (s && sel) op({ op: 'set_part_props', id: sel.id, props: { [s.dataset.prop]: s.value } }); });
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('select,input,textarea')) return;
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key.toLowerCase() === 'z'){ e.preventDefault(); op({ op: e.shiftKey ? 'redo' : 'undo' }); return; }
+  if (mod && e.key.toLowerCase() === 'y'){ e.preventDefault(); op({ op: 'redo' }); return; }
+  if (e.key === 'Escape'){ wireStart = null; sel = null; render(); return; }
+  if (e.key === 'w' || e.key === 'W') return setTool(tool === 'wire' ? 'select' : 'wire');
+  if (!sel) return;
+  if (e.key === 'Delete' || e.key === 'Backspace'){ e.preventDefault(); op({ op: sel.type === 'wire' ? 'remove_wire' : 'remove_part', id: sel.id }); }
+  if ((e.key === 'r' || e.key === 'R') && sel.type === 'part'){ const p = state.parts.find((x) => x.id === sel.id); if (['dual-header', 'single-header'].includes(p.kind)) op({ op: 'move_part', id: p.id, rotation: p.rotation === 180 ? 0 : 180 }); }
+});
+
+function connect(){
+  const es = new EventSource('/api/events');
+  es.onopen = () => { $('#live').classList.add('on'); $('#live-text').textContent = 'Live'; };
+  es.onmessage = (e) => { state = JSON.parse(e.data); if (!drag) render(); };
+  es.onerror = () => { $('#live').classList.remove('on'); $('#live-text').textContent = 'Reconnecting'; };
+}
+connect();
+})();
+</script>
+</body>
+</html>

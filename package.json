@@ -1,0 +1,22 @@
+{
+  "name": "breadboard-mcp",
+  "version": "0.2.0",
+  "description": "MCP server that lets Claude lay out and check breadboard circuits, with a live browser viewer",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "zod": "^4.6.5"
+  },
+  "type": "module",
+  "bin": {
+    "breadboard-mcp": "src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
