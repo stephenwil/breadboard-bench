@@ -7,6 +7,9 @@ The goal is realistic layouts. Physical fit matters as much as electrical correc
 
 This repo is set up as an MCP server for this project in `.mcp.json`, so the `breadboard-bench` tools are available while you work here. Approve the server when Claude Code asks.
 
+## Scope of sessions in this repo
+Sessions here are for developing the server, model and viewer. Circuit design requests (laying out a board, placing parts, wiring) belong in a separate design session. If one turns up here, say so instead of editing the live design. Use test designs or temp files (`BREADBOARD_DESIGN`, `BREADBOARD_DESIGNS_DIR`) when trying the tools, so the user's design in `~/.breadboard-bench/design.json` stays untouched.
+
 ## Layout
 - `src/model.js`: all domain logic, written as pure functions over a plain design object.
   - Board geometry and hole parsing (`a12`, `T+5`, `2:b7` for board 2).
