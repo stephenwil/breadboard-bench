@@ -343,6 +343,12 @@ export function normalizeDesign(d) {
   out.nextWire = Math.max(d.nextWire || 1, ...out.wires.map((w) => (+String(w.id).replace(/\D/g, '') || 0) + 1));
   return out;
 }
+// A saved design's file name (without .json): lowercase letters, digits, - and _ only, so a name can't point outside the folder.
+export function designFileName(name) {
+  const safe = String(name ?? '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+  if (!safe) fail('Give the design a name with at least one letter or digit.');
+  return safe;
+}
 function normalizeProps(lib, props, lenient = false) {
   const out = {};
   for (const [k, spec] of Object.entries(lib.props || {})) {

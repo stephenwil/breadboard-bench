@@ -38,6 +38,7 @@ Then open the viewer at <http://127.0.0.1:5178/>. If you're not sure of the addr
 | `BREADBOARD_PORT` | `5178` | Viewer port. If it's busy, the server tries the next 10 |
 | `BREADBOARD_HOST` | `127.0.0.1` | Set to `0.0.0.0` to reach the viewer from your LAN. Anyone who can reach it can edit the board, so only do this on a trusted network |
 | `BREADBOARD_DESIGN` | `~/.breadboard-bench/design.json` | Where the design is saved (a design at the old `~/.breadboard-mcp/design.json` is loaded if the new file doesn't exist yet). Claude Code and Claude Desktop share this file and pick up each other's changes |
+| `BREADBOARD_DESIGNS_DIR` | `~/.breadboard-bench/designs` | Folder for named designs saved with `save_design`. Point it at a folder in a repo to commit them |
 
 ## Boards
 
@@ -75,7 +76,8 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
 | `get_user_edits` | What you changed by hand in the viewer |
 | `get_design`, `get_nets` | Read back pins, holes, nets and wires |
 | `check_design` | All checks, plus a summary of the I²C buses |
-| `get_viewer_url`, `load_design` | Get the viewer link, or replace the design with a saved one |
+| `save_design`, `list_designs`, `open_design` | Keep several designs. Each is saved as `<name>.json` in the designs folder; opening one replaces the current design (undo restores it), so save first if you want to keep it |
+| `get_viewer_url`, `load_design` | Get the viewer link, or replace the design with a design object |
 
 ## Parts
 

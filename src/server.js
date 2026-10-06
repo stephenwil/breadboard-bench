@@ -9,7 +9,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as M from './model.js';
+import * as store from './designs.js';
 
+const DESIGNS_DIR = process.env.BREADBOARD_DESIGNS_DIR || path.join(os.homedir(), '.breadboard-bench', 'designs');
 const DESIGN_PATH = process.env.BREADBOARD_DESIGN || path.join(os.homedir(), '.breadboard-bench', 'design.json');
 // Before the rename the default lived under ~/.breadboard-mcp; read it if the new file doesn't exist yet.
 const LEGACY_DESIGN_PATH = path.join(os.homedir(), '.breadboard-mcp', 'design.json');
@@ -233,6 +235,17 @@ tool('get_viewer_url', 'Viewer link', 'The URL where the user can watch and edit
 tool('load_design', 'Load a design', 'Replace the design with a design object (the saved file format). Undo restores the previous one.',
   { design: z.record(z.string(), z.any()) },
   ({ design: d }) => { const next = M.normalizeDesign(d); mutate((draft) => { Object.keys(draft).forEach((k) => delete draft[k]); Object.assign(draft, next); }, { label: 'load design' }); return `Loaded "${design.name}". ${status()}.`; });
+
+tool('save_design', 'Save the design by name',
+  'Save the current design as a named file so it can be opened later, for example before new_design or open_design replaces it. Saving under a name that already exists overwrites that file. Defaults to the design\'s own name.',
+  { name: z.string().optional() },
+  ({ name }) => { const file = store.saveDesign(DESIGNS_DIR, name || design.name, design); return `Saved "${design.name}" to ${file}.`; });
+tool('list_designs', 'List saved designs', 'Designs saved with save_design, newest first, with board, part and wire counts.',
+  {}, () => { const designs = store.listDesigns(DESIGNS_DIR); return designs.length ? { folder: DESIGNS_DIR, designs } : `No saved designs in ${DESIGNS_DIR}.`; });
+tool('open_design', 'Open a saved design',
+  'Replace the current design with a saved one. Undo restores the previous one, but save the current design first if you want to keep it after a restart.',
+  { name: z.string() },
+  ({ name }) => { const next = store.openDesign(DESIGNS_DIR, name); mutate((draft) => { Object.keys(draft).forEach((k) => delete draft[k]); Object.assign(draft, next); }, { label: `open ${name}` }); return `Opened "${design.name}". ${status()}.`; });
 
 await mcp.connect(new StdioServerTransport());
 log('MCP server ready; design file', DESIGN_PATH);
