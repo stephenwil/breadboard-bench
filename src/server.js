@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Breadboard MCP server: Claude edits a breadboard design through MCP tools over stdio,
+// Breadboard Bench MCP server: Claude edits a breadboard design through MCP tools over stdio,
 // and you watch and edit it in a browser. stdout belongs to MCP, so logging goes to stderr.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -10,11 +10,13 @@ import os from 'node:os';
 import path from 'node:path';
 import * as M from './model.js';
 
-const DESIGN_PATH = process.env.BREADBOARD_DESIGN || path.join(os.homedir(), '.breadboard-mcp', 'design.json');
+const DESIGN_PATH = process.env.BREADBOARD_DESIGN || path.join(os.homedir(), '.breadboard-bench', 'design.json');
+// Before the rename the default lived under ~/.breadboard-mcp; read it if the new file doesn't exist yet.
+const LEGACY_DESIGN_PATH = path.join(os.homedir(), '.breadboard-mcp', 'design.json');
 const HOST = process.env.BREADBOARD_HOST || '127.0.0.1';
 const PORT = Number(process.env.BREADBOARD_PORT || 5178);
 const HISTORY = 100;
-const log = (...a) => console.error('[breadboard]', ...a);
+const log = (...a) => console.error('[breadboard-bench]', ...a);
 
 // ---------- state ----------
 let design = load();
@@ -24,7 +26,12 @@ const userEdits = []; let userEditsSeen = 0; // edits made in the browser, for g
 const clients = new Set();
 
 function load() {
-  try { return M.normalizeDesign(JSON.parse(fs.readFileSync(DESIGN_PATH, 'utf8'))); }
+  let file = DESIGN_PATH;
+  if (!process.env.BREADBOARD_DESIGN && !fs.existsSync(DESIGN_PATH) && fs.existsSync(LEGACY_DESIGN_PATH)) {
+    file = LEGACY_DESIGN_PATH;
+    log('no design at', DESIGN_PATH, '- loading', LEGACY_DESIGN_PATH);
+  }
+  try { return M.normalizeDesign(JSON.parse(fs.readFileSync(file, 'utf8'))); }
   catch { return M.newDesign({ name: 'Untitled' }); }
 }
 function persist() {
@@ -135,7 +142,7 @@ function listen(port, triesLeft) {
 listen(PORT, 10);
 
 // ---------- MCP tools ----------
-const mcp = new McpServer({ name: 'breadboard', version: '0.2.0' });
+const mcp = new McpServer({ name: 'breadboard-bench', version: '0.2.0' });
 const text = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
 const pendingEdits = () => userEdits.length - userEditsSeen;
 const tool = (name, title, description, inputSchema, fn) =>

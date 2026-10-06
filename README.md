@@ -1,4 +1,4 @@
-# breadboard-mcp
+# Breadboard Bench
 
 An MCP server that lets Claude lay out, wire and check breadboard circuits, with a live viewer you can also edit in.
 
@@ -15,20 +15,20 @@ You watch it happen in your browser. If you move something by hand, Claude can s
 Requires Node 18 or newer.
 
 ```sh
-cd breadboard-mcp
+cd breadboard-bench
 npm install
 ```
 
 **Claude Code**
 
 ```sh
-claude mcp add breadboard -- node /absolute/path/to/breadboard-mcp/src/server.js
+claude mcp add breadboard-bench -- node /absolute/path/to/breadboard-bench/src/server.js
 ```
 
 **Claude Desktop**: add this to `claude_desktop_config.json` and restart Claude Desktop:
 
 ```json
-{ "mcpServers": { "breadboard": { "command": "node", "args": ["/absolute/path/to/breadboard-mcp/src/server.js"] } } }
+{ "mcpServers": { "breadboard-bench": { "command": "node", "args": ["/absolute/path/to/breadboard-bench/src/server.js"] } } }
 ```
 
 Then open the viewer at <http://127.0.0.1:5178/>. If you're not sure of the address, ask Claude for the viewer link.
@@ -37,7 +37,7 @@ Then open the viewer at <http://127.0.0.1:5178/>. If you're not sure of the addr
 | --- | --- | --- |
 | `BREADBOARD_PORT` | `5178` | Viewer port. If it's busy, the server tries the next 10 |
 | `BREADBOARD_HOST` | `127.0.0.1` | Set to `0.0.0.0` to reach the viewer from your LAN. Anyone who can reach it can edit the board, so only do this on a trusted network |
-| `BREADBOARD_DESIGN` | `~/.breadboard-mcp/design.json` | Where the design is saved. Claude Code and Claude Desktop share this file and pick up each other's changes |
+| `BREADBOARD_DESIGN` | `~/.breadboard-bench/design.json` | Where the design is saved (a design at the old `~/.breadboard-mcp/design.json` is loaded if the new file doesn't exist yet). Claude Code and Claude Desktop share this file and pick up each other's changes |
 
 ## Boards
 

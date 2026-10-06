@@ -1,5 +1,5 @@
 {
-  "name": "breadboard-mcp",
+  "name": "breadboard-bench",
   "version": "0.2.0",
   "description": "MCP server that lets Claude lay out and check breadboard circuits, with a live browser viewer",
   "main": "src/server.js",
@@ -15,7 +15,7 @@
   },
   "type": "module",
   "bin": {
-    "breadboard-mcp": "src/server.js"
+    "breadboard-bench": "src/server.js"
   },
   "engines": {
     "node": ">=18"

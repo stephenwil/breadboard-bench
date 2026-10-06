@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Breadboard</title>
+<title>Breadboard Bench</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600&display=swap" rel="stylesheet">
@@ -62,7 +62,7 @@ kbd{font-family:inherit;font-size:.8rem;border:1px solid var(--panel-line);borde
 </head>
 <body>
 <header>
-  <h1 id="title">Breadboard</h1>
+  <h1 id="title">Breadboard Bench</h1>
   <span class="meta" id="meta"></span>
   <span class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></span>
 </header>
@@ -200,7 +200,7 @@ function render(){
   if (key !== boardKey){ drawBoards(); boardKey = key; }
   occupied = new Set([...state.parts.flatMap((p) => p.pins.map((x) => x.hole)), ...state.wires.flatMap((w) => [w.from, w.to])]);
   if (sel && !(sel.type === 'part' ? state.parts.some((p) => p.id === sel.id) : state.wires.some((w) => w.id === sel.id))) sel = null;
-  $('#title').textContent = state.name || 'Breadboard';
+  $('#title').textContent = state.name || 'Breadboard Bench';
   $('#meta').textContent = `${state.boards.length > 1 ? `${state.boards.length} boards` : (state.boards[0].cols === 63 ? 'Full-size board' : 'Half-size board')} · ${state.summary}`;
   L.zone.innerHTML = state.parts.flatMap((p) => p.overhang.map((h) => { const q = holeXY.get(h); return q ? `<rect x="${q.x - 6}" y="${q.y - 6}" width="12" height="12" rx="2" fill="#22334F" opacity=".1"/>` : ''; })).join('');
   L.body.innerHTML = state.parts.map(partSVG).join('');

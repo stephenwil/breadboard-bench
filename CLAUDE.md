@@ -1,11 +1,11 @@
-# breadboard-mcp: context for Claude
+# Breadboard Bench: context for Claude
 
 ## What this is
 An MCP server that lets Claude design breadboard layouts and wiring. The user asks for something like "ESP32-S3 with a BME280 and a breadboard power supply", and Claude does the rest through the MCP tools. A live browser viewer at http://127.0.0.1:5178 shows the board and lets the user edit it by hand.
 
 The goal is realistic layouts. Physical fit matters as much as electrical correctness: holes under modules are unusable, strips connect five holes, and rails can be split.
 
-This repo is set up as an MCP server for this project in `.mcp.json`, so the `breadboard` tools are available while you work here. Approve the server when Claude Code asks.
+This repo is set up as an MCP server for this project in `.mcp.json`, so the `breadboard-bench` tools are available while you work here. Approve the server when Claude Code asks.
 
 ## Layout
 - `src/model.js`: all domain logic, written as pure functions over a plain design object.
@@ -17,7 +17,7 @@ This repo is set up as an MCP server for this project in `.mcp.json`, so the `br
 - `src/server.js`: the MCP server (stdio) plus an HTTP server for the viewer.
   - The HTTP side serves `/`, `/api/state`, SSE on `/api/events`, and `POST /api/op` for browser edits. That endpoint requires the `x-breadboard: 1` header.
   - Holds the undo and redo history and the log of user edits.
-  - Saves to `~/.breadboard-mcp/design.json`, which can be overridden with `BREADBOARD_DESIGN`.
+  - Saves to `~/.breadboard-bench/design.json`, which can be overridden with `BREADBOARD_DESIGN`. If that file is missing and the pre-rename `~/.breadboard-mcp/design.json` exists, the old one is loaded (and saved to the new path on the next change).
 - `public/index.html`: the viewer, in a single file with no build step. It draws the board from `buildView()` output and sends edits to `/api/op`.
 - `test/model.test.js`: model tests, run with `npm test`.
 
