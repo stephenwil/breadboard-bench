@@ -43,5 +43,6 @@ This repo is set up as an MCP server for this project in `.mcp.json`, so the `br
 - Rails that skip a hole every five, to match real boards.
 - More parts: classic ESP32-DevKitC, Pico, DHT22, relay, potentiometer.
 - An auto-layout helper that suggests where to place parts.
+- Auto-routing: give a list of nets and have the tool pick the wires, instead of placing each one with `add_wires`.
 - Exporting a wiring list or schematic.
 - An ammeter or LED simulation in the viewer. The earlier claude.ai prototype had these.
