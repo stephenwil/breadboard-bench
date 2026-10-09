@@ -108,3 +108,50 @@ test('the same input gives the same wires', () => {
   const b = M.routeNets(structuredClone(resistorScene()), { nets: [['R1.1', 'R2.1']] });
   assert.equal(JSON.stringify(a.wires), JSON.stringify(b.wires));
 });
+
+const i2c = [['U2.SDA', 'U1.GPIO8'], ['U2.SCL', 'U1.GPIO9']];
+
+test('power mode wires S3 + BME280 + MB102 cleanly', () => {
+  const d = base();
+  M.routeNets(d, { nets: i2c, power: true });
+  assert.deepEqual(errors(d), []);
+  assert.equal(netOf(M.analyze(d), 'U2.VCC').volts, 3.3);
+  assert.equal(netOf(M.analyze(d), 'U1.5V').volts, 5);
+});
+
+test('a USB ESP32 feeds a rail', () => {
+  const d = M.newDesign();
+  M.placePart(d, { type: 'esp32-s3-devkitc-1', at: 'b8' });
+  M.placePart(d, { type: 'bme280-3v3', at: 'f40' });
+  const r = M.routeNets(d, { nets: i2c, power: true });
+  assert.deepEqual(errors(d), []);
+  assert.ok(r.notes.some((n) => /^fed .+ from U1\.3V3$/.test(n)), r.notes.join('; '));
+});
+
+test('no fitting voltage is explained', () => {
+  const d = M.newDesign();
+  M.placePart(d, { type: 'mb102-power', at: '1', props: { top: '5V', bottom: 'off' } });
+  M.placePart(d, { type: 'bme280-3v3', at: 'f40' });
+  assert.throws(() => M.routeNets(d, { power: true }), /No supply fits U1\.VCC \(1\.71-3\.6 V\)\. Available: 5 V\./);
+  const bare = M.newDesign();
+  M.placePart(bare, { type: 'bme280-3v3', at: 'f40' });
+  assert.throws(() => M.routeNets(bare, { power: true }), /Nothing here supplies power/);
+});
+
+test('split rails: power lands on the powered half', () => {
+  const d = M.newDesign({ splitRails: true });
+  M.placePart(d, { type: 'mb102-power', at: '1', props: { top: '3V3', bottom: '3V3' } });
+  M.placePart(d, { type: 'bme280-3v3', at: 'f50' });
+  const r = M.routeNets(d, { power: true });
+  const rail = r.wires.flatMap((w) => [w.from, w.to]).filter((h) => /^[TB][+-]/.test(h));
+  assert.ok(rail.length >= 2);
+  assert.ok(rail.every((h) => +h.slice(2) <= 32), rail.join(','));
+});
+
+test('joined boards with USB power have no errors', () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-s3-devkitc-1', at: 'd5' });
+  M.placePart(d, { type: 'bme280-3v3', at: '2:g40' });
+  M.routeNets(d, { nets: i2c, power: true });
+  assert.deepEqual(errors(d), []);
+});

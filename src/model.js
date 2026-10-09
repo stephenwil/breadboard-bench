@@ -644,28 +644,104 @@ function routeComponents(eps, analysis) {
   return [...comps.values()];
 }
 
+const railLabel = (strip) => { const [k, s] = strip.split(':'); return prefix(+k) + s.slice(0, 2); };
+
+// Power mode: groups that wire every ground pin to a ground rail and every supply pin to a rail of a fitting voltage.
+function powerJobs(design, layout, A) {
+  const holePt = (h) => { const p = parseHole(h, design, layout); return { x: p.col, y: p.y }; };
+  const centre = (strip) => { const pts = stripHoles(strip, design, layout).map(holePt); return { x: pts.reduce((s, q) => s + q.x, 0) / pts.length, y: pts.reduce((s, q) => s + q.y, 0) / pts.length }; };
+  const nearest = (list, from) => list.sort((a, b) => Math.hypot(centre(a.strip).x - from.x, centre(a.strip).y - from.y) - Math.hypot(centre(b.strip).x - from.x, centre(b.strip).y - from.y) || (a.strip < b.strip ? -1 : 1))[0];
+  const railEp = (strips) => ({ label: railLabel(strips[0]), strips, hole: null });
+  const labels = (eps) => eps.map((e) => e.label);
+
+  const rails = [];
+  for (const B of layout) for (const name of B.rails) {
+    const strips = new Set();
+    for (let c = 1; c <= B.cols; c++) strips.add(stripOf(parseHole(prefix(B.index) + name + c, design, layout), design, layout));
+    for (const strip of strips) {
+      const net = A.netByStrip.get(strip);
+      rails.push({ strip, name, ground: !!net?.ground, volts: net && !net.ground && net.sources.length ? net.sources[0].volts : null });
+    }
+  }
+
+  const gndEps = [], consumers = [], usb = [];
+  for (const L of A.layout.filter((x) => x.lib.kind !== 'rail-module')) {
+    const id = L.part.id;
+    if (L.pins.some((p) => p.role === 'gnd' || p.role === 'gnd-in')) gndEps.push(endpointOf(`${id}.GND`, design, layout));
+    for (const p of L.pins) if (p.role === 'power-in') consumers.push({ ref: `${id}.${p.name}`, min: p.min, max: p.max });
+    if (L.lib.mcu) {
+      const mode = L.part.props.power;
+      if (mode === 'usb') usb.push({ ref: `${id}.3V3`, volts: 3.3 }, { ref: `${id}.5V`, volts: 5 });
+      else if (mode === '5v-pin') consumers.push({ ref: `${id}.5V`, min: 5, max: 5 });
+      else if (mode === '3v3-pin') consumers.push({ ref: `${id}.3V3`, min: 3.3, max: 3.3 });
+    }
+  }
+
+  const jobs = [], notes = [];
+  if (gndEps.length) {
+    let grounded = rails.filter((r) => r.ground);
+    if (!grounded.length) {
+      const minus = rails.filter((r) => r.name.endsWith('-'));
+      grounded = minus.length ? [nearest(minus, centre(gndEps[0].strips[0]))] : [];
+    }
+    const eps = [...gndEps, ...grounded.map((r) => railEp([r.strip]))];
+    if (eps.length > 1) jobs.push({ eps, tag: 'Power', given: labels(eps) });
+  }
+
+  if (consumers.length) {
+    const avail = new Set([...rails.filter((r) => r.volts !== null).map((r) => r.volts), ...usb.map((u) => u.volts)]);
+    if (!avail.size) fail('Nothing here supplies power. Place an MB102 or power the ESP32 over USB.');
+    const byVolts = new Map();
+    for (const c of consumers) {
+      const v = [3.3, 5].find((x) => avail.has(x) && x >= c.min && x <= c.max);
+      if (v === undefined) fail(`No supply fits ${c.ref} (${c.min === c.max ? c.min : `${c.min}-${c.max}`} V). Available: ${[...avail].sort((a, b) => a - b).map((x) => `${x} V`).join(', ')}. Use a source in that range or a different part.`);
+      if (!byVolts.has(v)) byVolts.set(v, []);
+      byVolts.get(v).push(endpointOf(c.ref, design, layout));
+    }
+    const used = new Set();
+    for (const v of [...byVolts.keys()].sort((a, b) => a - b)) {
+      const powered = rails.filter((r) => r.volts === v);
+      if (powered.length) {
+        const eps = [...byVolts.get(v), railEp(powered.map((r) => r.strip))];
+        jobs.push({ eps, tag: 'Power', given: labels(eps) });
+        continue;
+      }
+      const src = usb.find((u) => u.volts === v), srcEp = endpointOf(src.ref, design, layout);
+      const spare = rails.filter((r) => r.name.endsWith('+') && r.volts === null && !r.ground && !used.has(r.strip));
+      if (!spare.length) fail(`No spare + rail to carry ${v} V from ${src.ref}. Use a board with more rails, or wire it by hand.`);
+      const rail = nearest(spare, centre(srcEp.strips[0]));
+      used.add(rail.strip);
+      notes.push(`fed ${railLabel(rail.strip)} from ${src.ref}`);
+      const eps = [srcEp, railEp([rail.strip]), ...byVolts.get(v)];
+      jobs.push({ eps, tag: 'Power', given: labels(eps) });
+    }
+  }
+  return { jobs, notes };
+}
+
 export function routeNets(design, { nets = [], power = false } = {}) {
   if (!nets.length && !power) fail('Give at least one net, or set power to true.');
-  if (power) fail("Power mode isn't implemented yet.");
   const layout = boardLayout(design);
-  const groups = nets.map((refs, i) => resolveGroup(refs, i + 1, design, layout, occupancy(design)));
+  const userJobs = nets.map((refs, i) => ({ eps: resolveGroup(refs, i + 1, design, layout, occupancy(design)), tag: `Net ${i + 1}`, given: refs }));
   const wires = [], satisfied = [], notes = [];
+  const jobs = [];
+  if (power) { const pj = powerJobs(design, layout, analyze(design)); jobs.push(...pj.jobs); notes.push(...pj.notes); }
+  jobs.push(...userJobs);
   const at = (h) => parseHole(h, design, layout);
   const centre = (holes) => ({ col: holes.reduce((s, h) => s + at(h).col, 0) / holes.length, y: holes.reduce((s, h) => s + at(h).y, 0) / holes.length });
 
-  groups.forEach((eps, gi) => {
-    const n = gi + 1;
+  jobs.forEach(({ eps, tag, given }) => {
     let added = 0;
     for (;;) {
       const comps = routeComponents(eps, analyze(design));
-      if (comps.length === 1) { if (!added) satisfied.push(nets[gi]); break; }
+      if (comps.length === 1) { if (!added) satisfied.push(given); break; }
       const occ = occupancy(design), avoid = overhangSet(design, layout);
       const free = (strip) => stripHoles(strip, design, layout).filter((h) => !occ.has(h) && !avoid.has(h));
       // Every candidate hole of a component, optionally pruning long strips towards a point.
       const candidates = (comp, toward) => {
         const out = [];
         for (const ep of comp) {
-          if (ep.hole) { if (occ.has(ep.hole)) fail(`Net ${n}: Hole ${ep.hole} is taken: ${describeOcc(occ.get(ep.hole))}.`); out.push(ep.hole); continue; }
+          if (ep.hole) { if (occ.has(ep.hole)) fail(`${tag}: Hole ${ep.hole} is taken: ${describeOcc(occ.get(ep.hole))}.`); out.push(ep.hole); continue; }
           for (const st of ep.strips) {
             let hs = free(st);
             if (toward && hs.length > ROUTE_WEIGHTS.candidates) {
@@ -678,7 +754,7 @@ export function routeNets(design, { nets = [], power = false } = {}) {
         return [...new Set(out)];
       };
       const all = comps.map((c) => candidates(c, null));
-      comps.forEach((c, i) => { if (!all[i].length) fail(`Net ${n}: No free hole left for ${c[0].label}. Move a part, or use two joined boards.`); });
+      comps.forEach((c, i) => { if (!all[i].length) fail(`${tag}: No free hole left for ${c[0].label}. Move a part, or use two joined boards.`); });
       let best = null;
       for (let i = 0; i < comps.length; i++) for (let j = i + 1; j < comps.length; j++) {
         const xs = candidates(comps[i], centre(all[j])), ys = candidates(comps[j], centre(all[i]));
@@ -689,7 +765,7 @@ export function routeNets(design, { nets = [], power = false } = {}) {
         }
       }
       try { wires.push(addWire(design, { from: best.from, to: best.to })); }
-      catch (e) { if (e instanceof ModelError) throw new ModelError(`Net ${n}: ${e.message}`); throw e; }
+      catch (e) { if (e instanceof ModelError) throw new ModelError(`${tag}: ${e.message}`); throw e; }
       added++;
     }
   });
