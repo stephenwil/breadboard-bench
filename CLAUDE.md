@@ -24,6 +24,7 @@ Sessions here are for developing the server, model and viewer. Circuit design re
   - Saves to `~/.breadboard-bench/design.json`, which can be overridden with `BREADBOARD_DESIGN`. If that file is missing and the pre-rename `~/.breadboard-mcp/design.json` exists, the old one is loaded (and saved to the new path on the next change).
 - `src/designs.js`: named designs, one `<name>.json` per design in `~/.breadboard-bench/designs` (override with `BREADBOARD_DESIGNS_DIR`). Backs the `save_design`, `list_designs` and `open_design` tools. File names go through `designFileName()` in `model.js` so a name can't escape the folder. `design.json` stays the live working copy.
 - `public/index.html`: the viewer, in a single file with no build step. It draws the board from `buildView()` output and sends edits to `/api/op`.
+- `site/index.html`: the marketing page, a single static file deployed to GitHub Pages by `.github/workflows/pages.yml`. It is separate from `public/`, which the server serves. Keep its part list, checks, install commands and limitations in step with the model and README, and update it when a feature ships or a roadmap item lands. It is excluded from the npm package via `files` in `package.json`.
 - `test/model.test.js`, `test/designs.test.js`: model and saved-design tests, run with `npm test`.
 
 ## Conventions
