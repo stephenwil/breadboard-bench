@@ -72,6 +72,7 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
 | `new_design` | Fresh board(s): size, 1 or 2 boards, joined or separate, split rails |
 | `place_part`, `move_part`, `set_part_props`, `remove_part` | Parts |
 | `add_wires`, `move_wire_end`, `remove_wire` | Wires. Each end can be a hole (`a12`, `2:b7`), a rail (`T+`, `2:B-`), or a part pin (`U1.GPIO8`, `U2.SDA`, `D1.A`), and the server picks a free hole for you |
+| `route_nets` | Let the server choose the wires. Give groups of pins, rails or holes that must be one net; it adds the fewest wires, skips what is already connected, and prefers short, straight wires that avoid crossing parts and other wires. A hole is used exactly; a pin or bare rail lets it pick a free hole. `power: true` also wires every ground and supply pin to a rail of a fitting voltage, feeding a rail from a USB-powered ESP32 if none is powered. One undo reverts the whole route |
 | `undo`, `redo` | Step through the shared history |
 | `get_user_edits` | What you changed by hand in the viewer |
 | `get_design`, `get_nets` | Read back pins, holes, nets and wires |

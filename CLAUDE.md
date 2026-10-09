@@ -15,6 +15,7 @@ Sessions here are for developing the server, model and viewer. Circuit design re
   - Board geometry and hole parsing (`a12`, `T+5`, `2:b7` for board 2).
   - The part library (`LIBRARY`) and footprints.
   - Edit operations, which throw `ModelError` with messages written for the user.
+  - `routeNets()` and `scoreWire()`: auto-routing behind the `route_nets` tool. It joins groups of endpoints with the fewest wires, adding each through `addWire`. `scoreWire` is the neatness cost (length, straight bonus, penalty per hole under a part, penalty per crossing), with the weights in `ROUTE_WEIGHTS`. `power: true` builds ground and supply groups from the parts' pin roles. Spec and plan: `docs/superpowers/`.
   - `analyze()`: builds the netlist and runs every check.
   - `buildView()`: the JSON the browser renders.
 - `src/server.js`: the MCP server (stdio) plus an HTTP server for the viewer.
@@ -47,6 +48,6 @@ Sessions here are for developing the server, model and viewer. Circuit design re
 - Rails that skip a hole every five, to match real boards.
 - More parts: classic ESP32-DevKitC, Pico, DHT22, relay, potentiometer.
 - An auto-layout helper that suggests where to place parts.
-- Auto-routing: give a list of nets and have the tool pick the wires, instead of placing each one with `add_wires`.
+- A route button in the viewer, reusing `routeNets` so it shares the MCP tool's validation.
 - Exporting a wiring list or schematic.
 - An ammeter or LED simulation in the viewer. The earlier claude.ai prototype had these.
