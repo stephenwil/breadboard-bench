@@ -155,3 +155,13 @@ test('joined boards with USB power have no errors', () => {
   M.routeNets(d, { nets: i2c, power: true });
   assert.deepEqual(errors(d), []);
 });
+
+for (const hole of ['a50', 'T+5']) {
+  test(`an explicit hole (${hole}) in a three-endpoint net is used exactly, once`, () => {
+    const d = base();
+    const r = M.routeNets(d, { nets: [[hole, 'U2.SDA', 'U1.GPIO8']] });
+    assert.equal(r.wires.length, 2);
+    assert.equal(r.wires.flatMap((w) => [w.from, w.to]).filter((h) => h === hole).length, 1);
+    assert.ok(joined(d, 'U2.SDA', 'U1.GPIO8'));
+  });
+}

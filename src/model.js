@@ -732,6 +732,7 @@ export function routeNets(design, { nets = [], power = false } = {}) {
 
   jobs.forEach(({ eps, tag, given }) => {
     let added = 0;
+    const mine = new Set(); // holes this job's own wires already use
     for (;;) {
       const comps = routeComponents(eps, analyze(design));
       if (comps.length === 1) { if (!added) satisfied.push(given); break; }
@@ -741,6 +742,7 @@ export function routeNets(design, { nets = [], power = false } = {}) {
       const candidates = (comp, toward) => {
         const out = [];
         for (const ep of comp) {
+          if (ep.hole && mine.has(ep.hole)) { out.push(...free(ep.strips[0])); continue; } // already wired: any free hole of its strip is the same net
           if (ep.hole) { if (occ.has(ep.hole)) fail(`${tag}: Hole ${ep.hole} is taken: ${describeOcc(occ.get(ep.hole))}.`); out.push(ep.hole); continue; }
           for (const st of ep.strips) {
             let hs = free(st);
@@ -764,7 +766,7 @@ export function routeNets(design, { nets = [], power = false } = {}) {
           if (!best || score < best.score || (score === best.score && key < best.key)) best = { score, key, from: hx, to: hy };
         }
       }
-      try { wires.push(addWire(design, { from: best.from, to: best.to })); }
+      try { const w = addWire(design, { from: best.from, to: best.to }); wires.push(w); mine.add(w.from).add(w.to); }
       catch (e) { if (e instanceof ModelError) throw new ModelError(`${tag}: ${e.message}`); throw e; }
       added++;
     }
