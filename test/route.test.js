@@ -69,3 +69,42 @@ test('joining two supplies is done and then flagged', () => {
   assert.equal(r.wires.length, 1);
   assert.ok(M.analyze(d).checks.some((c) => c.code === 'supply-clash'));
 });
+
+test('a straight wire is cheaper than its length', () => {
+  const d = M.newDesign();
+  assert.equal(M.scoreWire(d, 'a10', 'a14'), 4 + M.ROUTE_WEIGHTS.straight);
+  assert.ok(Math.abs(M.scoreWire(d, 'a10', 'b14') - Math.hypot(4, 1)) < 1e-9);
+});
+
+test('a wire over a dev board costs per hole', () => {
+  const d = M.newDesign();
+  M.placePart(d, { type: 'esp32-s3-devkitc-1', at: 'a8' });
+  assert.equal(M.scoreWire(d, 'T+10', 'B+10') - M.scoreWire(d, 'T+6', 'B+6'), 7 * M.ROUTE_WEIGHTS.overPart);
+});
+
+test('a crossing wire costs extra', () => {
+  const d = M.newDesign();
+  M.addWire(d, { from: 'T+15', to: 'c15' });
+  assert.equal(M.scoreWire(d, 'a10', 'a20') - M.scoreWire(d, 'c10', 'c20'), M.ROUTE_WEIGHTS.crossing);
+});
+
+const resistorScene = () => {
+  const d = M.newDesign();
+  M.placePart(d, { type: 'resistor', at: 'e10', to: 'e12' });
+  M.placePart(d, { type: 'resistor', at: 'e20', to: 'e22' });
+  M.addWire(d, { from: 'T+15', to: 'c15' });
+  return d;
+};
+
+test('the router picks the uncrossed hole', () => {
+  const d = resistorScene();
+  const r = M.routeNets(d, { nets: [['R1.1', 'R2.1']] });
+  assert.equal(r.wires.length, 1);
+  assert.deepEqual([r.wires[0].from, r.wires[0].to].sort(), ['c10', 'c20']);
+});
+
+test('the same input gives the same wires', () => {
+  const a = M.routeNets(structuredClone(resistorScene()), { nets: [['R1.1', 'R2.1']] });
+  const b = M.routeNets(structuredClone(resistorScene()), { nets: [['R1.1', 'R2.1']] });
+  assert.equal(JSON.stringify(a.wires), JSON.stringify(b.wires));
+});

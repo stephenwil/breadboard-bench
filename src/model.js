@@ -557,13 +557,36 @@ export function removeWire(design, { id }) {
 }
 
 // ---------- routing ----------
-// Weights are in pitch units (0.1 in). scoreWire gets its neatness terms in a later step.
+// Weights are in pitch units (0.1 in).
 export const ROUTE_WEIGHTS = { overPart: 6, crossing: 2, straight: -1, partMargin: 0.6, endMargin: 0.5, candidates: 12 };
 
+// Neatness cost of a wire between two holes: lower is tidier. Length, a bonus for running straight along a
+// row or column, a penalty per hole under a part that the wire passes over, and one per wire it crosses.
 export function scoreWire(design, fromHole, toHole) {
-  const layout = boardLayout(design);
-  const a = parseHole(fromHole, design, layout), b = parseHole(toHole, design, layout);
-  return Math.hypot(a.col - b.col, a.y - b.y);
+  const W = ROUTE_WEIGHTS, layout = boardLayout(design);
+  const pt = (id) => { const h = parseHole(id, design, layout); return { x: h.col, y: h.y }; };
+  const A = pt(fromHole), B = pt(toHole), dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy);
+  let cost = len;
+  if (A.x === B.x || A.y === B.y) cost += W.straight;
+
+  const under = new Set();
+  for (const part of design.parts) {
+    try { const fp = footprint(part, design, layout); for (const h of [...fp.covered, ...fp.overhang]) under.add(h); } catch { /* bad placement is reported by analyze */ }
+  }
+  if (len > 2 * W.endMargin) {
+    for (const id of under) {
+      const p = pt(id), t = ((p.x - A.x) * dx + (p.y - A.y) * dy) / len; // distance along the wire
+      if (t >= W.endMargin && t <= len - W.endMargin && Math.abs((p.x - A.x) * dy - (p.y - A.y) * dx) / len <= W.partMargin) cost += W.overPart;
+    }
+  }
+
+  const side = (P, Q, R) => { const c = (Q.x - P.x) * (R.y - P.y) - (Q.y - P.y) * (R.x - P.x); return Math.abs(c) < 1e-9 ? 0 : Math.sign(c); };
+  for (const w of design.wires) {
+    if (!parseHole(w.from, design, layout) || !parseHole(w.to, design, layout)) continue;
+    const C = pt(w.from), D = pt(w.to);
+    if (side(A, B, C) * side(A, B, D) < 0 && side(C, D, A) * side(C, D, B) < 0) cost += W.crossing; // proper crossing only
+  }
+  return cost;
 }
 
 // An endpoint is one exact hole, or a set of strips the router may pick a free hole from.
