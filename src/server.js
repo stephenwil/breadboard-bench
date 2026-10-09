@@ -214,6 +214,20 @@ tool('move_wire_end', 'Move a wire end', 'Move one end of a wire to another hole
   (a) => { const w = mutate((d) => M.moveWireEnd(d, a), { label: `move ${a.id}` }); return `${w.id} now ${w.from} → ${w.to}. ${status()}.`; });
 tool('remove_wire', 'Remove a wire', 'Remove a wire by id (W3).',
   { id: z.string() }, (a) => { mutate((d) => M.removeWire(d, a), { label: `remove ${a.id}` }); return `Removed ${a.id}. ${status()}.`; });
+tool('route_nets', 'Route nets',
+  'Let the tool choose the wires. `nets` is a list of groups of endpoints that must end up as one net, e.g. [["U1.GPIO8","U2.SDA"],["U2.VCC","U2.CSB","B+"]]. Endpoints are a hole (used exactly), a rail (T+, 2:B-) or a part pin (U1.GPIO8); a rail or pin lets the tool pick a free hole. It adds the fewest wires, skips pins that are already connected, and prefers short, straight wires that avoid crossing parts and other wires. `power: true` also wires every ground pin and supply pin to a rail of a fitting voltage (it feeds a rail from a USB-powered ESP32 if no rail is powered). One undo reverts the whole route; use add_wires when you want to choose each hole yourself.',
+  { nets: z.array(z.array(z.string())).optional(), power: z.boolean().optional() },
+  ({ nets = [], power = false }) => {
+    const r = mutate((d) => M.routeNets(d, { nets, power }), { label: `route ${nets.length} net${nets.length === 1 ? '' : 's'}${power ? ' + power' : ''}` });
+    // Wire ends are free holes in a pin's strip, so name the pins that share the hole's strip.
+    const inStrip = new Map();
+    for (const L of M.analyze(design).layout) for (const p of L.pins) {
+      const st = M.stripOf(M.parseHole(p.hole, design), design);
+      inStrip.set(st, [...(inStrip.get(st) || []), `${L.part.id}.${p.name}`]);
+    }
+    const at = (h) => { const names = inStrip.get(M.stripOf(M.parseHole(h, design), design)); return names ? `${h} (${names.join(', ')})` : h; };
+    return { added: r.wires.map((w) => `${w.id}: ${at(w.from)} → ${at(w.to)}, ${w.color}`), already_connected: r.satisfied, notes: r.notes, status: status() };
+  });
 
 tool('undo', 'Undo', 'Undo the last change, whether you or the user made it.', {}, () => `Undid "${undo('claude')}". ${status()}.`);
 tool('redo', 'Redo', 'Redo the last undone change.', {}, () => `Redid "${redo('claude')}". ${status()}.`);
