@@ -556,6 +556,123 @@ export function removeWire(design, { id }) {
   design.wires.splice(i, 1);
 }
 
+// ---------- routing ----------
+// Weights are in pitch units (0.1 in). scoreWire gets its neatness terms in a later step.
+export const ROUTE_WEIGHTS = { overPart: 6, crossing: 2, straight: -1, partMargin: 0.6, endMargin: 0.5, candidates: 12 };
+
+export function scoreWire(design, fromHole, toHole) {
+  const layout = boardLayout(design);
+  const a = parseHole(fromHole, design, layout), b = parseHole(toHole, design, layout);
+  return Math.hypot(a.col - b.col, a.y - b.y);
+}
+
+// An endpoint is one exact hole, or a set of strips the router may pick a free hole from.
+function endpointOf(ref, design, layout) {
+  const s = String(ref ?? '').trim();
+  const h = parseHole(s, design, layout);
+  if (h) return { label: s, strips: [stripOf(h, design, layout)], hole: h.id };
+  const rail = /^(?:(\d)\s*:\s*)?(T\+|T-|B\+|B-)$/i.exec(s);
+  if (rail) {
+    const name = rail[2].toUpperCase(), strips = new Set();
+    for (const B of rail[1] ? layout.filter((x) => x.index === +rail[1]) : layout) {
+      if (!B.rails.includes(name)) continue;
+      for (let c = 1; c <= B.cols; c++) strips.add(stripOf(parseHole(prefix(B.index) + name + c, design, layout), design, layout));
+    }
+    if (!strips.size) fail(`There is no ${name} rail${rail[1] ? ` on board ${rail[1]}` : ''} in this design.`);
+    return { label: s, strips: [...strips], hole: null };
+  }
+  const pm = /^([A-Za-z][\w-]*)\.(.+)$/.exec(s);
+  if (pm) {
+    const part = design.parts.find((p) => p.id.toUpperCase() === pm[1].toUpperCase());
+    if (!part) fail(`No part called ${pm[1]}.`);
+    const pins = findPins(footprint(part, design, layout), part.id, pm[2]);
+    return { label: s, strips: [...new Set(pins.map((p) => stripOf(parseHole(p.hole, design, layout), design, layout)))], hole: null };
+  }
+  fail(`Couldn't read "${s}". Use a hole (a12, T+5, 2:b7), a rail (T+, B-, 2:B+) or a part pin (U1.GPIO8, U2.SDA).`);
+}
+
+function resolveGroup(refs, n, design, layout, occ) {
+  if (!Array.isArray(refs) || refs.length < 2) fail(`Net ${n} needs at least two endpoints.`);
+  return refs.map((r) => {
+    try {
+      const ep = endpointOf(r, design, layout);
+      if (ep.hole && occ.has(ep.hole)) fail(`Hole ${ep.hole} is taken: ${describeOcc(occ.get(ep.hole))}.`);
+      return ep;
+    } catch (e) {
+      if (e instanceof ModelError) throw new ModelError(`Net ${n}: ${e.message}`);
+      throw e;
+    }
+  });
+}
+
+// Endpoints are connected when any of their strips already share a net; returns the endpoint sets.
+function routeComponents(eps, analysis) {
+  const keyOf = (st) => analysis.netByStrip.get(st)?.root ?? st;
+  const parent = eps.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) i = parent[i]; return i; };
+  const owner = new Map();
+  eps.forEach((ep, i) => {
+    for (const k of new Set(ep.strips.map(keyOf))) {
+      if (owner.has(k)) parent[find(i)] = find(owner.get(k)); else owner.set(k, i);
+    }
+  });
+  const comps = new Map();
+  eps.forEach((ep, i) => { const r = find(i); if (!comps.has(r)) comps.set(r, []); comps.get(r).push(ep); });
+  return [...comps.values()];
+}
+
+export function routeNets(design, { nets = [], power = false } = {}) {
+  if (!nets.length && !power) fail('Give at least one net, or set power to true.');
+  if (power) fail("Power mode isn't implemented yet.");
+  const layout = boardLayout(design);
+  const groups = nets.map((refs, i) => resolveGroup(refs, i + 1, design, layout, occupancy(design)));
+  const wires = [], satisfied = [], notes = [];
+  const at = (h) => parseHole(h, design, layout);
+  const centre = (holes) => ({ col: holes.reduce((s, h) => s + at(h).col, 0) / holes.length, y: holes.reduce((s, h) => s + at(h).y, 0) / holes.length });
+
+  groups.forEach((eps, gi) => {
+    const n = gi + 1;
+    let added = 0;
+    for (;;) {
+      const comps = routeComponents(eps, analyze(design));
+      if (comps.length === 1) { if (!added) satisfied.push(nets[gi]); break; }
+      const occ = occupancy(design), avoid = overhangSet(design, layout);
+      const free = (strip) => stripHoles(strip, design, layout).filter((h) => !occ.has(h) && !avoid.has(h));
+      // Every candidate hole of a component, optionally pruning long strips towards a point.
+      const candidates = (comp, toward) => {
+        const out = [];
+        for (const ep of comp) {
+          if (ep.hole) { if (occ.has(ep.hole)) fail(`Net ${n}: Hole ${ep.hole} is taken: ${describeOcc(occ.get(ep.hole))}.`); out.push(ep.hole); continue; }
+          for (const st of ep.strips) {
+            let hs = free(st);
+            if (toward && hs.length > ROUTE_WEIGHTS.candidates) {
+              const d = (h) => Math.hypot(at(h).col - toward.col, at(h).y - toward.y);
+              hs = hs.sort((a, b) => d(a) - d(b) || (a < b ? -1 : 1)).slice(0, ROUTE_WEIGHTS.candidates);
+            }
+            out.push(...hs);
+          }
+        }
+        return [...new Set(out)];
+      };
+      const all = comps.map((c) => candidates(c, null));
+      comps.forEach((c, i) => { if (!all[i].length) fail(`Net ${n}: No free hole left for ${c[0].label}. Move a part, or use two joined boards.`); });
+      let best = null;
+      for (let i = 0; i < comps.length; i++) for (let j = i + 1; j < comps.length; j++) {
+        const xs = candidates(comps[i], centre(all[j])), ys = candidates(comps[j], centre(all[i]));
+        for (const hx of xs) for (const hy of ys) {
+          if (hx === hy) continue;
+          const score = scoreWire(design, hx, hy), key = `${hx}|${hy}`;
+          if (!best || score < best.score || (score === best.score && key < best.key)) best = { score, key, from: hx, to: hy };
+        }
+      }
+      try { wires.push(addWire(design, { from: best.from, to: best.to })); }
+      catch (e) { if (e instanceof ModelError) throw new ModelError(`Net ${n}: ${e.message}`); throw e; }
+      added++;
+    }
+  });
+  return { wires, satisfied, notes };
+}
+
 // ---------- analysis ----------
 class UF {
   constructor() { this.p = new Map(); }
