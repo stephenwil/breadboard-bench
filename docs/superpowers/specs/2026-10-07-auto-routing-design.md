@@ -89,6 +89,16 @@ All are `ModelError`, using the "Net 2: ..." prefix style of `add_wires`, and le
 
 Also run `npm test` and one end-to-end MCP smoke run on temp paths (`BREADBOARD_DESIGN`, `BREADBOARD_DESIGNS_DIR`) so the live design is not touched.
 
+## Clarifications (added while planning)
+
+- Explicit hole endpoints (`a12`, `2:b7`, `T+5`) are used exactly. Only pin endpoints (`U1.GPIO1`) and bare rail names (`T+`) let the router choose a hole.
+- A bare rail name means every strip of that rail on every board. In power mode the router restricts it to the strips that are actually powered, so split rails and joined boards work.
+- Problems with a group itself (fewer than two endpoints, an unknown pin or hole, a taken explicit hole) are found before any wire is added.
+- With no nets and `power` false, the error is "Give at least one net, or set power to true."
+- Power mode and the ESP32 `power` prop: `usb`: its 3V3 and 5V pins are sources. `5v-pin`: its 5V pin is a 5 V consumer. `3v3-pin`: its 3V3 pin is a 3.3 V consumer.
+- The ground group is every ground pin plus every rail already grounded by a source, so both MB102 ground rails end up as one net (the `split-ground` check requires it). If no rail is grounded, it is the rail strip nearest the ESP32's GND pin.
+- The unfit-voltage error reads: "No supply fits U2.VCC (1.71-3.6 V). Available: 5 V. Use a source in that range or a different part." The range comes from the part.
+
 ## Open points to confirm while building
 
 - How `analyze()` exposes pin strips and part-covered holes for the cost function. If it needs a small helper in `model.js`, add one rather than duplicating logic.
