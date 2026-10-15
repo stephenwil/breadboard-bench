@@ -78,6 +78,7 @@ kbd{font-family:inherit;font-size:.8rem;border:1px solid var(--panel-line);borde
   <button class="btn" id="undo" disabled>Undo</button>
   <button class="btn" id="redo" disabled>Redo</button>
   <span class="sep"></span>
+  <button class="btn" id="tidy" aria-pressed="false" title="Draw wires with 90° bends instead of curves">Tidy wires</button>
   <button class="btn" id="route-power" title="Wire every ground and supply pin to a rail of the right voltage">Route power</button>
   <span class="hint" id="hint">Drag parts and wire ends to move them. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.</span>
 </div>
@@ -181,16 +182,48 @@ function partSVG(p){
   }
   return s + '</g>';
 }
-function wirePath(A, B){
+let tidy = false;
+try { tidy = localStorage.getItem('bb-tidy') === '1'; } catch { /* storage blocked */ }
+const LANE = 3;
+// Tidy wires run vertically from the left end, then horizontally along the other end's row. Wires whose
+// horizontal runs would overlap are moved into separate lanes a few pixels apart.
+let lanes = new Map();
+function planLanes(){
+  lanes = new Map();
+  const byRow = new Map();
+  for (const w of state.wires){
+    const A = holeXY.get(w.from), B = holeXY.get(w.to); if (!A || !B) continue;
+    const [L0, R0] = A.x <= B.x ? [A, B] : [B, A];
+    if (L0.x === R0.x || L0.y === R0.y) continue;
+    const key = R0.y; if (!byRow.has(key)) byRow.set(key, []);
+    byRow.get(key).push({ id: w.id, x0: L0.x, x1: R0.x });
+  }
+  for (const group of byRow.values()){
+    const placed = [];
+    for (const it of group.sort((a, b) => a.x0 - b.x0 || a.id.localeCompare(b.id))){
+      let lane = 0;
+      while (placed.some((q) => q.lane === lane && q.x1 > it.x0 && it.x1 > q.x0)) lane++;
+      placed.push({ ...it, lane });
+      lanes.set(it.id, lane ? (lane % 2 ? 1 : -1) * Math.ceil(lane / 2) * LANE : 0);
+    }
+  }
+}
+function wirePath(A, B, id){
+  if (tidy){
+    const [L0, R0] = A.x <= B.x ? [A, B] : [B, A];
+    if (L0.x === R0.x || L0.y === R0.y) return `M${A.x} ${A.y} L${B.x} ${B.y}`;
+    const y = R0.y + (lanes.get(id) || 0);
+    return `M${L0.x} ${L0.y} L${L0.x} ${y} L${R0.x} ${y} L${R0.x} ${R0.y}`;
+  }
   const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1, k = Math.min(len * 0.14, 26);
   return `M${A.x} ${A.y} Q${(A.x + B.x) / 2 - dy / len * k} ${(A.y + B.y) / 2 + dx / len * k} ${B.x} ${B.y}`;
 }
 function wireSVG(w){
   const A = holeXY.get(w.from), B = holeXY.get(w.to); if (!A || !B) return '';
-  const d = wirePath(A, B), c = COLORS[w.color] || COLORS.green, isSel = sel && sel.type === 'wire' && sel.id === w.id;
+  const d = wirePath(A, B, w.id), c = COLORS[w.color] || COLORS.green, isSel = sel && sel.type === 'wire' && sel.id === w.id;
   let s = `<g data-wire="${esc(w.id)}" data-net="${w.net ?? ''}">`;
   if (isSel) s += `<path d="${d}" stroke="#B8652A" stroke-width="11" fill="none" stroke-linecap="round" opacity=".45"/>`;
-  s += `<path d="${d}" stroke="rgba(0,0,0,.3)" stroke-width="6" fill="none" stroke-linecap="round" transform="translate(.8 1.5)"/><path d="${d}" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round"/>`;
+  s += `<path d="${d}" stroke="rgba(0,0,0,.3)" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round" transform="translate(.8 1.5)"/><path d="${d}" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
   s += `<circle cx="${A.x}" cy="${A.y}" r="2" fill="#B5B8BC"/><circle cx="${B.x}" cy="${B.y}" r="2" fill="#B5B8BC"/><path d="${d}" stroke="#000" stroke-opacity="0" stroke-width="14" fill="none" pointer-events="stroke"/>`;
   if (isSel) for (const [end, q] of [['from', A], ['to', B]]) s += `<circle data-handle="${end}" cx="${q.x}" cy="${q.y}" r="8" fill="#B8652A" fill-opacity=".25" stroke="#B8652A" stroke-width="2"/>`;
   return s + '</g>';
@@ -210,6 +243,7 @@ function render(){
   $('#meta').textContent = `${state.boards.length > 1 ? `${state.boards.length} boards` : (state.boards[0].cols === 63 ? 'Full-size board' : 'Half-size board')} · ${state.summary}`;
   L.zone.innerHTML = state.parts.flatMap((p) => p.overhang.map((h) => { const q = holeXY.get(h); return q ? `<rect x="${q.x - 6}" y="${q.y - 6}" width="12" height="12" rx="2" fill="#22334F" opacity=".1"/>` : ''; })).join('');
   L.body.innerHTML = state.parts.map(partSVG).join('');
+  if (tidy) planLanes();
   L.wires.innerHTML = state.wires.map(wireSVG).join('');
   L.pins.innerHTML = state.parts.filter((p) => p.kind !== 'two-lead').flatMap((p) => p.pins.map((pin) => { const q = holeXY.get(pin.hole); return `<rect x="${q.x - 3.5}" y="${q.y - 3.5}" width="7" height="7" rx="1.2" fill="${pin.role === 'nc' ? '#7A7468' : '#D4A84A'}" stroke="#8C6A22" stroke-width=".8" pointer-events="none"/>`; })).join('');
   $('#empty').hidden = state.parts.length > 0 || state.wires.length > 0;
@@ -369,6 +403,9 @@ function setTool(t){ tool = t; wireStart = null; netPick = []; $('#t-select').se
 $('#t-select').onclick = () => setTool('select');
 $('#t-wire').onclick = () => setTool('wire');
 $('#t-net').onclick = () => setTool('net');
+function applyTidy(){ $('#tidy').setAttribute('aria-pressed', tidy); }
+$('#tidy').onclick = () => { tidy = !tidy; try { localStorage.setItem('bb-tidy', tidy ? '1' : '0'); } catch { /* storage blocked */ } applyTidy(); render(); };
+applyTidy();
 $('#net-clear').onclick = () => { netPick = []; drawUI(); };
 async function routeNet(){
   if (netPick.length < 2) return;
