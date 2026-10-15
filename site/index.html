@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breadboard Bench: an MCP server for realistic breadboard layouts</title>
+<meta name="description" content="Ask Claude for a breadboard layout and watch it appear in a live browser viewer. Breadboard Bench checks physical fit and wiring, and lets you edit by hand. Open source MCP server, Node 18+.">
+<style>:root{color-scheme:light dark}body{margin:0}</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Layout: single readable column; hero sits on a pegboard hole grid, sections are labelled like a datasheet. */
+:root {
+  --bg: #f3f1ea; --surface: #fbfaf6; --fg: #1d2a2a; --muted: #5b6a68;
+  --line: #d9d5c8; --accent: #0b6e6e; --copper: #b4561f; --code-bg: #e8e5da;
+  --hole: #cfcabb;
+  --display: "Bricolage Grotesque", "Segoe UI", sans-serif;
+  --body: "Source Sans 3", "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121a1a; --surface: #182222; --fg: #e6ebe8; --muted: #9fb0ac;
+  --line: #2b3a39; --accent: #4fc3bd; --copper: #e58a52; --code-bg: #1f2c2b; --hole: #2a3836; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #121a1a; --surface: #182222; --fg: #e6ebe8; --muted: #9fb0ac;
+  --line: #2b3a39; --accent: #4fc3bd; --copper: #e58a52; --code-bg: #1f2c2b; --hole: #2a3836; color-scheme: dark; }
+body { background: var(--bg); color: var(--fg); font: 17px/1.6 var(--body); }
+.wrap { max-width: 46rem; margin: 0 auto; padding-inline: 1rem; padding-block: 1.5rem 4rem; display: flex; flex-direction: column; gap: 3rem; }
+h1, h2 { font-family: var(--display); text-wrap: balance; line-height: 1.1; margin: 0; }
+h1 { font-size: clamp(2rem, 6vw, 3rem); }
+h2 { font-size: 1.5rem; }
+h3 { font: 600 1.05rem var(--body); margin: 0; }
+p { margin: 0; max-width: 65ch; }
+.label { font: 500 0.72rem var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--copper); }
+section { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+.hero { padding: 1.5rem 1.25rem; border-radius: 8px; background-color: var(--surface); border: 1px solid var(--line);
+  background-image: radial-gradient(circle, var(--hole) 1.6px, transparent 2px); background-size: 14px 14px; gap: 1rem; }
+.hero .sub { background: var(--surface); padding: 0.5rem 0.6rem; border-radius: 4px; }
+.hero h1 { background: var(--surface); padding: 0.3rem 0.6rem; border-radius: 4px; align-self: flex-start; }
+.cta { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.btn { font: 600 0.95rem var(--body); padding: 0.55rem 1rem; border-radius: 4px; text-decoration: none; border: 1px solid var(--accent); color: var(--accent); background: var(--surface); }
+.btn.primary { background: var(--accent); color: var(--bg); }
+.btn:focus-visible, a:focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+ol.steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 0.9rem; counter-reset: s; }
+ol.steps li { counter-increment: s; padding-left: 2.4rem; position: relative; }
+ol.steps li::before { content: counter(s); position: absolute; left: 0; top: 0.1rem; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--accent); color: var(--bg); font: 500 0.8rem/1.6rem var(--mono); text-align: center; }
+.feat { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.feat > div { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem; display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.feat p { font-size: 0.95rem; color: var(--muted); }
+.chat { display: flex; flex-direction: column; gap: 0.75rem; }
+.msg { padding: 0.7rem 0.9rem; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+.msg.you { border-left: 3px solid var(--copper); }
+.msg.ai { border-left: 3px solid var(--accent); }
+.msg b { font: 500 0.72rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; display: block; margin-bottom: 0.2rem; color: var(--muted); }
+.msg i { color: var(--muted); }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 0.72rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+code, pre { font-family: var(--mono); font-size: 0.82rem; background: var(--code-bg); border-radius: 4px; }
+code { padding: 0.1rem 0.3rem; }
+pre { padding: 0.8rem 1rem; margin: 0; overflow-x: auto; }
+pre code { padding: 0; background: none; }
+details { border-bottom: 1px solid var(--line); padding-block: 0.7rem; }
+summary { cursor: pointer; font-weight: 600; }
+details p { margin-top: 0.5rem; color: var(--muted); }
+ul.road { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.3rem; }
+footer { font-size: 0.88rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <span class="label" style="align-self:flex-start;background:var(--surface);padding:0.1rem 0.4rem">MCP server · Node 18+</span>
+    <h1>Describe the circuit. Watch Claude build it on a breadboard.</h1>
+    <p class="sub">Breadboard Bench is an MCP server that lets Claude place parts, run jumper wires and check the result against how a real breadboard works. A live viewer shows the board, and you can edit it by hand.</p>
+    <div class="cta"><a class="btn primary" href="#quickstart">Get started</a><a class="btn" href="https://github.com/stephenwil/breadboard-bench">View on GitHub</a></div>
+  </section>
+
+  <section>
+    <span class="label">How it works</span>
+    <h2>From a sentence to a wired board</h2>
+    <ol class="steps">
+      <li><b>Ask Claude.</b> Describe what you want, for example "ESP32-S3 with a BME280 and a breadboard power supply".</li>
+      <li><b>Claude uses the MCP tools.</b> It places parts, routes or adds wires and runs the design checks, then fixes what they flag.</li>
+      <li><b>Watch it live.</b> The viewer at <code>http://127.0.0.1:5178</code> redraws as each change lands.</li>
+      <li><b>Edit by hand.</b> Drag parts, move wire ends, or add wires in the viewer. Your edits go through the same validation as Claude's, so a move into a taken hole is refused with the reason.</li>
+      <li><b>Both stay in sync.</b> Claude is told when you have made edits and can read exactly what changed, then carry on from your version of the board.</li>
+    </ol>
+  </section>
+
+  <section>
+    <span class="label">Features</span>
+    <div class="feat">
+      <div><h3>Layouts that fit the real board</h3><p>Holes under a module are unusable. Each strip connects five holes. Rails can be split in the middle. Pins that land in a taken hole, under a module or under the power module's overhang are reported.</p></div>
+      <div><h3>Electrical checks, with the problem highlighted</h3><p>Short circuits, two supply voltages tied together, a supply back-feeding a USB-powered board, over- and undervoltage, unjoined grounds, I²C wiring and duplicate addresses, LEDs with no series resistor, and risky GPIOs (strapping, USB, UART0, flash/PSRAM pins). Hover a check in the viewer to see the holes it refers to.</p></div>
+      <div><h3>Auto-routing</h3><p>Give <code>route_nets</code> groups of pins, rails or holes that must be one net. It picks the wires, adds the fewest it can, skips what is already connected, and prefers short, straight wires that avoid crossing parts and each other. One undo reverts the whole route.</p></div>
+      <div><h3>Undo and redo for both of you</h3><p>One shared history covers your edits and Claude's (the last 100 changes). Failed multi-step edits leave the design untouched.</p></div>
+      <div><h3>Named saved designs</h3><p>Save, list and reopen designs by name. Each is a plain <code>&lt;name&gt;.json</code> file in a folder you can point at a git repo.</p></div>
+      <div><h3>A part library with sourced pins</h3><p>Dev-board pin tables come from Espressif's user guides. Placement rules and props (power mode, module variant, pin order) are exposed to Claude through <code>list_parts</code>.</p></div>
+      <div><h3>Claude sees your edits</h3><p>Moves, deletions, new wires and prop changes made in the viewer are logged, and Claude's next tool call flags them so it can adapt instead of overwriting your work.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="label">Example conversation</span>
+    <div class="chat">
+      <div class="msg you"><b>You</b>Lay out an ESP32-S3 DevKitC with a BME280 on I²C and a breadboard power supply. I'll power the ESP32 over USB.</div>
+      <div class="msg ai"><b>Claude</b><i>(reads the board notes, starts a design with two joined boards, places the ESP32 so both headers are reachable, places the BME280, wires 3V3, GND, SDA and SCL, then runs <code>check_design</code>.)</i> The layout is in the viewer at http://127.0.0.1:5178/. One thing to know: the MB102 power module needs both rail pairs on one board, so it does not fit a joined pair. The checks flag it, so I would power the board over USB and use the 3.3 V pin for the sensor.</div>
+      <div class="msg you"><b>You</b><i>(drags the BME280 two columns right in the viewer)</i> I moved the sensor. Is everything still wired up?</div>
+      <div class="msg ai"><b>Claude</b><i>(calls <code>get_user_edits</code>, then <code>check_design</code>)</i> You moved U2 to a new column, and its wires still point at the old holes. SDA and SCL no longer reach the sensor. I am moving the wire ends to match.</div>
+    </div>
+    <p style="color:var(--muted);font-size:0.9rem">Illustrative, not a recorded session. The exact wording will vary.</p>
+  </section>
+
+  <section>
+    <span class="label">Supported parts</span>
+    <div class="scroll"><table>
+      <tr><th>Type</th><th>What it is</th></tr>
+      <tr><td><code>esp32-s3-devkitc-1</code></td><td>Espressif ESP32-S3-DevKitC-1, v1.1 pinout. Props: power source, module variant, board revision</td></tr>
+      <tr><td><code>esp32-c5-devkitc-1</code></td><td>Espressif ESP32-C5-DevKitC-1, v1.2 pinout (boards from PW-2025-04-0446 on). Props: power source, PSRAM</td></tr>
+      <tr><td><code>bme280-3v3</code></td><td>BME280 breakout, 6-pin, no regulator, 3.3 V only</td></tr>
+      <tr><td><code>bme280-5v</code></td><td>BME280 breakout, 4-pin, with regulator, 3.3 to 5 V</td></tr>
+      <tr><td><code>ssd1306-oled</code></td><td>0.96 in I²C OLED, address 0x3C. Pin order is configurable because sellers differ</td></tr>
+      <tr><td><code>mb102-power</code></td><td>MB102-style breadboard power module. Each rail can be 5V, 3V3 or off</td></tr>
+      <tr><td><code>led</code></td><td>3 mm or 5 mm LED</td></tr>
+      <tr><td><code>resistor</code></td><td>Two-lead resistor</td></tr>
+      <tr><td><code>button</code></td><td>6 mm tactile switch straddling the centre gap</td></tr>
+    </table></div>
+  </section>
+
+  <section id="quickstart">
+    <span class="label">Quickstart</span>
+    <p>Requires Node 18 or newer.</p>
+    <pre><code>git clone https://github.com/stephenwil/breadboard-bench.git
+cd breadboard-bench
+npm install</code></pre>
+    <h3>Claude Code</h3>
+    <pre><code>claude mcp add breadboard-bench -- node /absolute/path/to/breadboard-bench/src/server.js</code></pre>
+    <p>Inside the repo itself, a project-scoped <code>.mcp.json</code> is already included. Approve the server when Claude Code asks.</p>
+    <h3>Claude Desktop</h3>
+    <p>Add this to <code>claude_desktop_config.json</code> and restart:</p>
+    <pre><code>{ "mcpServers": { "breadboard-bench": { "command": "node", "args": ["/absolute/path/to/breadboard-bench/src/server.js"] } } }</code></pre>
+    <p>Open http://127.0.0.1:5178/ (or ask Claude for the viewer link), then ask for a layout. To run the tests: <code>npm test</code>.</p>
+    <p>Settings: <code>BREADBOARD_PORT</code> (default 5178; if busy, the next 10 ports are tried), <code>BREADBOARD_HOST</code>, <code>BREADBOARD_DESIGN</code>, <code>BREADBOARD_DESIGNS_DIR</code>.</p>
+  </section>
+
+  <section>
+    <span class="label">FAQ</span>
+    <div>
+      <details><summary>Is the viewer reachable from other machines?</summary><p>Not by default. It listens on 127.0.0.1 only. You can set <code>BREADBOARD_HOST=0.0.0.0</code> to reach it from your LAN, but anyone who can reach it can edit the board, so only do that on a network you trust.</p></details>
+      <details><summary>Where are my designs stored?</summary><p>The working copy is <code>~/.breadboard-bench/design.json</code>. Named designs go in <code>~/.breadboard-bench/designs/</code>. Both locations can be changed with environment variables. Undo history is kept in memory while the server runs, so save a named design before opening or starting another if you want to keep it.</p></details>
+      <details><summary>Can I trust the physical dimensions?</summary><p>Mostly, with three exceptions that are assumed rather than measured: dev-board header spacing is modelled as 1.0 in, the second board of a joined pair sits 1.3 in below the first, and the MB102 is modelled as overhanging about four columns of the main area. Check against your own hardware.</p></details>
+      <details><summary>Do the rails match my breadboard?</summary><p>Not exactly. Rails are modelled with a hole in every column, while many real rails skip one hole every five. Rails can be split in the middle if yours are.</p></details>
+      <details><summary>Can it handle parts that are not in the library?</summary><p>Not yet. The library has the nine types above. New parts are added in code, and pin data is meant to come from manufacturer documentation.</p></details>
+      <details><summary>Does it simulate the circuit?</summary><p>No. It checks wiring, fit, supply voltages and common mistakes. It does not simulate current, LED brightness or firmware behaviour.</p></details>
+    </div>
+  </section>
+
+  <section>
+    <span class="label">Roadmap</span>
+    <p>These are ideas, not commitments, and none of them exist yet.</p>
+    <ul class="road">
+      <li>Rails that skip a hole every five, to match real boards</li>
+      <li>More parts: classic ESP32-DevKitC, Pico, DHT22, relay, potentiometer</li>
+      <li>An auto-layout helper that suggests where to place parts</li>
+      <li>A route button in the viewer, so you can auto-route without asking Claude</li>
+      <li>Export of a wiring list or schematic</li>
+      <li>An ammeter or LED simulation in the viewer</li>
+    </ul>
+  </section>
+
+  <footer>Breadboard Bench is an open source MCP server (ISC licence per package.json) that runs on your machine. Nothing leaves it unless you expose the viewer yourself. Pin data comes from Espressif's user guides; check any layout against your own parts before powering it. Not affiliated with Espressif or Anthropic.</footer>
+</main>
+</body>
+</html>
+

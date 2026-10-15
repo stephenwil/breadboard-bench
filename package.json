@@ -17,6 +17,10 @@
   "bin": {
     "breadboard-bench": "src/server.js"
   },
+  "files": [
+    "src",
+    "public"
+  ],
   "engines": {
     "node": ">=18"
   }
