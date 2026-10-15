@@ -24,7 +24,7 @@ const log = (...a) => console.error('[breadboard-bench]', ...a);
 
 // ---------- state ----------
 let design = load();
-let rev = 1, lastWrite = 0, viewUrl = null;
+let rev = 1, viewUrl = null;
 // Modification time and size of the design file as this server last read or wrote it, to spot another
 // process changing it underneath us. null when the file doesn't exist.
 const stamp = () => { try { const st = fs.statSync(DESIGN_PATH); return `${st.mtimeMs}:${st.size}`; } catch { return null; } };
@@ -47,7 +47,6 @@ function persist() {
   const tmp = DESIGN_PATH + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(design, null, 2));
   fs.renameSync(tmp, DESIGN_PATH);
-  lastWrite = Date.now();
   seen = stamp();
 }
 const view = () => ({ ...M.buildView(design, { rev, canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 }), file: DESIGN_LABEL });
@@ -68,6 +67,8 @@ function guardExternal() {
   const now = stamp();
   if (now === null || now === seen) return;
   if (reloadFromDisk()) throw new M.ModelError(`Another session changed this design (now ${design.parts.length} parts, ${design.wires.length} wires). Check it with get_design and repeat your edit.`);
+  // The repeat the message asks for would overwrite the broken file, so keep a copy of it first.
+  try { fs.copyFileSync(DESIGN_PATH, `${DESIGN_PATH}.bad-${Date.now()}`); } catch { /* gone already */ }
   seen = now;
   throw new M.ModelError('Another session changed this design. Check it with get_design and repeat your edit.');
 }
@@ -106,9 +107,11 @@ function redo(by) {
   return step.label;
 }
 
-// Another process (Claude Code and Claude Desktop can both run this server) may change the file.
-fs.watchFile(DESIGN_PATH, { interval: 800 }, () => {
-  if (Date.now() - lastWrite < 1500) return;
+// Another process (Claude Code and Claude Desktop can both run this server) may change the file. Our own
+// writes record their stamp in `seen`, so anything else that differs is external. The interval is only
+// overridden (BREADBOARD_WATCH_MS) by tests that want the guard to be the one that notices.
+fs.watchFile(DESIGN_PATH, { interval: Number(process.env.BREADBOARD_WATCH_MS) || 800 }, () => {
+  if (stamp() === seen) return;
   if (reloadFromDisk()) log('reloaded design from disk');
 });
 

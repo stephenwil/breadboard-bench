@@ -54,12 +54,12 @@ test('the legacy file is only read for the shared file', async () => {
   } finally { await shared.stop(); await session.stop(); }
 });
 
-// Two servers on one file. The second call follows the first one's write at once, well inside the 800 ms
-// file watcher's poll, so the guard (not the watcher) is what has to catch the change.
-const pair = async () => {
+// Two servers on one file. The file watcher is slowed to an hour (BREADBOARD_WATCH_MS) unless a test asks
+// for it, so the guard alone has to catch the change and the tests don't depend on a poll tick.
+const pair = async ({ watch = false } = {}) => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'bb-pair-'));
   const file = path.join(dir, 'shared.json');
-  const env = { BREADBOARD_DESIGN: file };
+  const env = { BREADBOARD_DESIGN: file, ...(watch ? {} : { BREADBOARD_WATCH_MS: '3600000' }) };
   const a = await startServer({ env }), b = await startServer({ env });
   return { a, b, file, stop: async () => { await a.stop(); await b.stop(); } };
 };
@@ -124,7 +124,35 @@ test('an unreadable file refuses once, without counts', async () => {
     assert.equal(r.isError, true);
     assert.match(r.text, UNREADABLE);
     assert.match((await p.a.call('get_design')).text, /esp32-s3-devkitc-1/);
+    const backup = fs.readdirSync(path.dirname(p.file)).find((f) => f.startsWith('shared.json.bad-'));
+    assert.ok(backup, 'the unreadable file should be kept before a repeat can overwrite it');
+    assert.equal(fs.readFileSync(path.join(path.dirname(p.file), backup), 'utf8'), '{ not json');
     assert.equal((await p.a.call('place_part', BME)).isError, false);
     assert.equal(parts(p.file), 2);
+  } finally { await p.stop(); }
+});
+
+test('an external write right after our own is still picked up by the watcher', async () => {
+  const p = await pair({ watch: true });
+  try {
+    await p.a.call('place_part', S3);
+    const d = JSON.parse(fs.readFileSync(p.file, 'utf8'));
+    fs.writeFileSync(p.file, JSON.stringify({ ...d, name: 'External' }, null, 2));
+    let name;
+    for (let i = 0; i < 40 && name !== 'External'; i++) { await new Promise((r) => setTimeout(r, 100)); name = (await state(p.a)).name; }
+    assert.equal(name, 'External');
+  } finally { await p.stop(); }
+});
+
+test('an external reload clears the undo history', async () => {
+  const p = await pair();
+  try {
+    await p.a.call('place_part', S3);
+    const d = JSON.parse(fs.readFileSync(p.file, 'utf8'));
+    fs.writeFileSync(p.file, JSON.stringify({ ...d, name: 'External' }, null, 2));
+    assert.match((await p.a.call('place_part', BME)).text, COUNTED);
+    const r = await p.a.call('undo');
+    assert.equal(r.isError, true);
+    assert.match(r.text, /Nothing to undo/);
   } finally { await p.stop(); }
 });
