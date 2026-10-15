@@ -37,7 +37,7 @@ Then open the viewer at <http://127.0.0.1:5178/>. If you're not sure of the addr
 | --- | --- | --- |
 | `BREADBOARD_PORT` | `5178` | Viewer port. If it's busy, the server tries the next 10 |
 | `BREADBOARD_HOST` | `127.0.0.1` | Set to `0.0.0.0` to reach the viewer from your LAN. Anyone who can reach it can edit the board, so only do this on a trusted network |
-| `BREADBOARD_DESIGN` | `~/.breadboard-bench/design.json` | Where the design is saved (a design at the old `~/.breadboard-mcp/design.json` is loaded if the new file doesn't exist yet). Claude Code and Claude Desktop share this file and pick up each other's changes |
+| `BREADBOARD_DESIGN` | `~/.breadboard-bench/sessions/<session id>.json` in Claude Code, `~/.breadboard-bench/design.json` otherwise | Where the design is saved. Each Claude Code session gets its own file and starts with an empty design, so sessions don't overwrite each other; use `open_design` to bring in older work. Claude Desktop has no session id and keeps using `design.json` (a design at the old `~/.breadboard-mcp/design.json` is loaded if that file doesn't exist yet). Setting this variable overrides all of that, and two servers pointed at one file share it. If another process changes the file under a running server, the next edit is refused with "Another session changed this design" after the server reloads it, so nothing is overwritten. Check it with `get_design` and repeat the edit. If the file was unreadable, a copy is kept next to it as `<file>.bad-<time>` before the repeat overwrites it |
 | `BREADBOARD_DESIGNS_DIR` | `~/.breadboard-bench/designs` | Folder for named designs saved with `save_design`. Point it at a folder in a repo to commit them |
 
 ## Boards

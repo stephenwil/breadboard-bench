@@ -12,7 +12,9 @@ import * as M from './model.js';
 import * as store from './designs.js';
 
 const DESIGNS_DIR = process.env.BREADBOARD_DESIGNS_DIR || path.join(os.homedir(), '.breadboard-bench', 'designs');
-const DESIGN_PATH = process.env.BREADBOARD_DESIGN || path.join(os.homedir(), '.breadboard-bench', 'design.json');
+// One design file per Claude Code session (see designPathFor); BREADBOARD_DESIGN overrides it.
+const { file: DESIGN_PATH, kind: DESIGN_KIND } = store.designPathFor(process.env, os.homedir());
+const DESIGN_LABEL = store.designLabel(DESIGN_PATH, DESIGN_KIND);
 // Before the rename the default lived under ~/.breadboard-mcp; read it if the new file doesn't exist yet.
 const LEGACY_DESIGN_PATH = path.join(os.homedir(), '.breadboard-mcp', 'design.json');
 const HOST = process.env.BREADBOARD_HOST || '127.0.0.1';
@@ -22,14 +24,18 @@ const log = (...a) => console.error('[breadboard-bench]', ...a);
 
 // ---------- state ----------
 let design = load();
-let rev = 1, lastWrite = 0, viewUrl = null;
+let rev = 1, viewUrl = null;
+// Modification time and size of the design file as this server last read or wrote it, to spot another
+// process changing it underneath us. null when the file doesn't exist.
+const stamp = () => { try { const st = fs.statSync(DESIGN_PATH); return `${st.mtimeMs}:${st.size}`; } catch { return null; } };
+let seen = stamp();
 const undoStack = [], redoStack = [];
 const userEdits = []; let userEditsSeen = 0; // edits made in the browser, for get_user_edits
 const clients = new Set();
 
 function load() {
   let file = DESIGN_PATH;
-  if (!process.env.BREADBOARD_DESIGN && !fs.existsSync(DESIGN_PATH) && fs.existsSync(LEGACY_DESIGN_PATH)) {
+  if (DESIGN_KIND === 'shared' && !fs.existsSync(DESIGN_PATH) && fs.existsSync(LEGACY_DESIGN_PATH)) {
     file = LEGACY_DESIGN_PATH;
     log('no design at', DESIGN_PATH, '- loading', LEGACY_DESIGN_PATH);
   }
@@ -41,14 +47,34 @@ function persist() {
   const tmp = DESIGN_PATH + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(design, null, 2));
   fs.renameSync(tmp, DESIGN_PATH);
-  lastWrite = Date.now();
+  seen = stamp();
 }
-const view = () => M.buildView(design, { rev, canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 });
+const view = () => ({ ...M.buildView(design, { rev, canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 }), file: DESIGN_LABEL });
 function broadcast() { const msg = `data: ${JSON.stringify(view())}\n\n`; for (const res of clients) res.write(msg); }
 function commit() { rev++; persist(); broadcast(); }
 
 // Apply an edit to a copy; only a successful edit replaces the design and joins the undo history.
+// Replace the design with the file's contents. The history described the old design, so it is cleared.
+function reloadFromDisk() {
+  try { design = M.normalizeDesign(JSON.parse(fs.readFileSync(DESIGN_PATH, 'utf8'))); }
+  catch { return false; /* half-written or deleted */ }
+  undoStack.length = 0; redoStack.length = 0;
+  seen = stamp(); rev++; broadcast();
+  return true;
+}
+// Refuse to edit a design that another process has changed since we last looked; nothing is overwritten.
+function guardExternal() {
+  const now = stamp();
+  if (now === null || now === seen) return;
+  if (reloadFromDisk()) throw new M.ModelError(`Another session changed this design (now ${design.parts.length} parts, ${design.wires.length} wires). Check it with get_design and repeat your edit.`);
+  // The repeat the message asks for would overwrite the broken file, so keep a copy of it first.
+  try { fs.copyFileSync(DESIGN_PATH, `${DESIGN_PATH}.bad-${Date.now()}`); } catch { /* gone already */ }
+  seen = now;
+  throw new M.ModelError('Another session changed this design. Check it with get_design and repeat your edit.');
+}
+
 function mutate(fn, { label, by = 'claude' } = {}) {
+  guardExternal();
   const before = design;
   const draft = structuredClone(design);
   const result = fn(draft);
@@ -61,6 +87,7 @@ function mutate(fn, { label, by = 'claude' } = {}) {
   return result;
 }
 function undo(by) {
+  guardExternal();
   const step = undoStack.pop();
   if (!step) throw new M.ModelError('Nothing to undo.');
   redoStack.push({ design, label: step.label, by: step.by });
@@ -70,6 +97,7 @@ function undo(by) {
   return step.label;
 }
 function redo(by) {
+  guardExternal();
   const step = redoStack.pop();
   if (!step) throw new M.ModelError('Nothing to redo.');
   undoStack.push({ design, label: step.label, by: step.by });
@@ -79,11 +107,12 @@ function redo(by) {
   return step.label;
 }
 
-// Another process (Claude Code and Claude Desktop can both run this server) may change the file.
-fs.watchFile(DESIGN_PATH, { interval: 800 }, () => {
-  if (Date.now() - lastWrite < 1500) return;
-  try { design = M.normalizeDesign(JSON.parse(fs.readFileSync(DESIGN_PATH, 'utf8'))); rev++; broadcast(); log('reloaded design from disk'); }
-  catch { /* half-written or deleted */ }
+// Another process (Claude Code and Claude Desktop can both run this server) may change the file. Our own
+// writes record their stamp in `seen`, so anything else that differs is external. The interval is only
+// overridden (BREADBOARD_WATCH_MS) by tests that want the guard to be the one that notices.
+fs.watchFile(DESIGN_PATH, { interval: Number(process.env.BREADBOARD_WATCH_MS) || 800 }, () => {
+  if (stamp() === seen) return;
+  if (reloadFromDisk()) log('reloaded design from disk');
 });
 
 // ---------- edits from the browser ----------
@@ -174,7 +203,7 @@ const tool = (name, title, description, inputSchema, fn) =>
     } catch (e) { return { isError: true, ...text(e instanceof M.ModelError ? e.message : `Error: ${e.message}`) }; }
   });
 const status = () => M.summarizeChecks(M.analyze(design));
-const viewerLine = () => (viewUrl ? `Viewer: ${viewUrl}` : 'The viewer is not running.');
+const viewerLine = () => `${viewUrl ? `Viewer: ${viewUrl}` : 'The viewer is not running.'}\nDesign file: ${DESIGN_LABEL}`;
 const rotation = z.union([z.literal(0), z.literal(180)]);
 
 tool('board_info', 'Board geometry and notation',
