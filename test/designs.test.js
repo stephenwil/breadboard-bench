@@ -86,3 +86,25 @@ test('a name with path tricks stays inside the folder', () => {
   const file = store.saveDesign(dir, '../../escape', M.newDesign());
   assert.equal(path.dirname(file), dir);
 });
+
+test('designPathFor prefers BREADBOARD_DESIGN', () => {
+  assert.deepEqual(store.designPathFor({ BREADBOARD_DESIGN: '/x/y.json', CLAUDE_CODE_SESSION_ID: 'abc' }, '/h'), { file: '/x/y.json', kind: 'override' });
+});
+
+test('designPathFor uses the session file', () => {
+  assert.deepEqual(store.designPathFor({ CLAUDE_CODE_SESSION_ID: '0c1d338e-d098-4028' }, '/h'), { file: '/h/.breadboard-bench/sessions/0c1d338e-d098-4028.json', kind: 'session' });
+});
+
+test('designPathFor falls back to the shared file', () => {
+  assert.deepEqual(store.designPathFor({}, '/h'), { file: '/h/.breadboard-bench/design.json', kind: 'shared' });
+});
+
+test('designPathFor ignores an unsafe session id', () => {
+  for (const id of ['../x', 'a/b', '', 'a b']) assert.equal(store.designPathFor({ CLAUDE_CODE_SESSION_ID: id }, '/h').kind, 'shared', JSON.stringify(id));
+});
+
+test('designLabel names the session, shared and override files', () => {
+  assert.equal(store.designLabel('/h/.breadboard-bench/sessions/0c1d338e-d098-4028.json', 'session'), 'session 0c1d338e');
+  assert.equal(store.designLabel('/h/.breadboard-bench/design.json', 'shared'), 'design.json');
+  assert.equal(store.designLabel('/x/y.json', 'override'), 'y.json');
+});
