@@ -12,7 +12,9 @@ import * as M from './model.js';
 import * as store from './designs.js';
 
 const DESIGNS_DIR = process.env.BREADBOARD_DESIGNS_DIR || path.join(os.homedir(), '.breadboard-bench', 'designs');
-const DESIGN_PATH = process.env.BREADBOARD_DESIGN || path.join(os.homedir(), '.breadboard-bench', 'design.json');
+// One design file per Claude Code session (see designPathFor); BREADBOARD_DESIGN overrides it.
+const { file: DESIGN_PATH, kind: DESIGN_KIND } = store.designPathFor(process.env, os.homedir());
+const DESIGN_LABEL = store.designLabel(DESIGN_PATH, DESIGN_KIND);
 // Before the rename the default lived under ~/.breadboard-mcp; read it if the new file doesn't exist yet.
 const LEGACY_DESIGN_PATH = path.join(os.homedir(), '.breadboard-mcp', 'design.json');
 const HOST = process.env.BREADBOARD_HOST || '127.0.0.1';
@@ -29,7 +31,7 @@ const clients = new Set();
 
 function load() {
   let file = DESIGN_PATH;
-  if (!process.env.BREADBOARD_DESIGN && !fs.existsSync(DESIGN_PATH) && fs.existsSync(LEGACY_DESIGN_PATH)) {
+  if (DESIGN_KIND === 'shared' && !fs.existsSync(DESIGN_PATH) && fs.existsSync(LEGACY_DESIGN_PATH)) {
     file = LEGACY_DESIGN_PATH;
     log('no design at', DESIGN_PATH, '- loading', LEGACY_DESIGN_PATH);
   }
@@ -43,7 +45,7 @@ function persist() {
   fs.renameSync(tmp, DESIGN_PATH);
   lastWrite = Date.now();
 }
-const view = () => M.buildView(design, { rev, canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 });
+const view = () => ({ ...M.buildView(design, { rev, canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 }), file: DESIGN_LABEL });
 function broadcast() { const msg = `data: ${JSON.stringify(view())}\n\n`; for (const res of clients) res.write(msg); }
 function commit() { rev++; persist(); broadcast(); }
 
@@ -174,7 +176,7 @@ const tool = (name, title, description, inputSchema, fn) =>
     } catch (e) { return { isError: true, ...text(e instanceof M.ModelError ? e.message : `Error: ${e.message}`) }; }
   });
 const status = () => M.summarizeChecks(M.analyze(design));
-const viewerLine = () => (viewUrl ? `Viewer: ${viewUrl}` : 'The viewer is not running.');
+const viewerLine = () => `${viewUrl ? `Viewer: ${viewUrl}` : 'The viewer is not running.'}\nDesign file: ${DESIGN_LABEL}`;
 const rotation = z.union([z.literal(0), z.literal(180)]);
 
 tool('board_info', 'Board geometry and notation',

@@ -254,7 +254,7 @@ function render(){
   occupied = new Set([...state.parts.flatMap((p) => p.pins.map((x) => x.hole)), ...state.wires.flatMap((w) => [w.from, w.to])]);
   if (sel && !(sel.type === 'part' ? state.parts.some((p) => p.id === sel.id) : state.wires.some((w) => w.id === sel.id))) sel = null;
   $('#title').textContent = state.name || 'Breadboard Bench';
-  $('#meta').textContent = `${state.boards.length > 1 ? `${state.boards.length} boards` : (state.boards[0].cols === 63 ? 'Full-size board' : 'Half-size board')} · ${state.summary}`;
+  $('#meta').textContent = `${state.file ? `${state.file} · ` : ''}${state.boards.length > 1 ? `${state.boards.length} boards` : (state.boards[0].cols === 63 ? 'Full-size board' : 'Half-size board')} · ${state.summary}`;
   L.zone.innerHTML = state.parts.flatMap((p) => p.overhang.map((h) => { const q = holeXY.get(h); return q ? `<rect x="${q.x - 6}" y="${q.y - 6}" width="12" height="12" rx="2" fill="#22334F" opacity=".1"/>` : ''; })).join('');
   L.body.innerHTML = state.parts.map(partSVG).join('');
   if (tidy) planLanes();
