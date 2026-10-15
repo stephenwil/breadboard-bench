@@ -40,6 +40,7 @@ h1{font-family:'Barlow Semi Condensed','Barlow',system-ui,sans-serif;font-weight
 #board{display:block;min-width:900px;width:100%;height:auto;margin:0 auto;touch-action:none;user-select:none;-webkit-user-select:none}
 #board.wiring{cursor:crosshair}
 .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.empty[hidden]{display:none}
 .empty span{background:var(--panel);border:1px solid var(--panel-line);border-radius:10px;padding:10px 16px}
 main{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;padding:10px 18px 18px}
 @media (max-width:860px){main{grid-template-columns:1fr}}
