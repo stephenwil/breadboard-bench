@@ -79,6 +79,7 @@ kbd{font-family:inherit;font-size:.8rem;border:1px solid var(--panel-line);borde
   <button class="btn" id="redo" disabled>Redo</button>
   <span class="sep"></span>
   <button class="btn" id="tidy" aria-pressed="false" title="Draw wires with 90° bends instead of curves">Tidy wires</button>
+  <span id="boardcolours" style="display:flex;gap:6px" role="group" aria-label="Board colour"></span>
   <button class="btn" id="route-power" title="Wire every ground and supply pin to a rail of the right voltage">Route power</button>
   <span class="hint" id="hint">Drag parts and wire ends to move them. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.</span>
 </div>
@@ -114,7 +115,20 @@ const X = (c) => MX + (c - 1) * P;
 const Y = (y) => 26 + (y - minY) * P;
 
 // ---------- board ----------
+// Board palettes. body/edge/rail/channel colour the board, hole and the three label colours sit on top of it,
+// and plus/minus colour the rail stripes and signs so they stay visible on dark boards.
+const BOARDS = {
+  cream: { name: 'Cream', body: '#EEEBE2', edge: '#CDC8B7', rail: '#E6E2D6', channel: '#DAD5C6', hole: '#3D3B36', label: '#8B8676', tag: '#A39E8E', plus: '#C8322E', minus: '#2C5DA8' },
+  white: { name: 'White', body: '#F7F7F5', edge: '#D5D5D0', rail: '#EFEFEC', channel: '#E2E2DE', hole: '#3D3B36', label: '#8A8A84', tag: '#A8A8A2', plus: '#C8322E', minus: '#2C5DA8' },
+  green: { name: 'Green', body: '#3F7A4E', edge: '#2D5A39', rail: '#386E46', channel: '#2F6240', hole: '#E9F2E4', label: '#D4E6D2', tag: '#B5D2B6', plus: '#FFB4AE', minus: '#B9D2FF' },
+  blue: { name: 'Blue', body: '#3B5F9A', edge: '#2A4675', rail: '#345489', channel: '#2C4A7F', hole: '#E8EEF9', label: '#D3DEF3', tag: '#B4C6E6', plus: '#FFB4AE', minus: '#C4DAFF' },
+  red: { name: 'Red', body: '#A83A36', edge: '#7E2A27', rail: '#9B332F', channel: '#8A2D2A', hole: '#FBEAE6', label: '#F5D3CE', tag: '#E8B4AE', plus: '#FFE0DC', minus: '#C4DAFF' },
+  black: { name: 'Black', body: '#2A2B2E', edge: '#161719', rail: '#232427', channel: '#1D1E20', hole: '#C9CCD1', label: '#A4A8AF', tag: '#8A8E96', plus: '#FF6B64', minus: '#6FA3FF', halo: true },
+};
+let boardColour = 'cream';
+try { const saved = localStorage.getItem('bb-board'); if (BOARDS[saved]) boardColour = saved; } catch { /* storage blocked */ }
 function drawBoards(){
+  const C = BOARDS[boardColour];
   const bs = state.boards, maxCols = Math.max(...bs.map((b) => b.cols));
   minY = bs[0].oy + bs[0].top;
   const last = bs[bs.length - 1], W = MX * 2 + (maxCols - 1) * P, H = Y(last.oy + last.bottom) + 26;
@@ -123,19 +137,19 @@ function drawBoards(){
   let s = '';
   for (const b of bs){
     const bw = MX * 2 + (b.cols - 1) * P - 12, y0 = Y(b.oy + b.top), y1 = Y(b.oy + b.bottom);
-    s += `<rect x="6" y="${y0}" width="${bw}" height="${y1 - y0}" rx="10" fill="#EEEBE2" stroke="#CDC8B7" stroke-width="1.5"/>`;
-    if (b.rails.includes('T+')) s += `<rect x="6" y="${y0}" width="${bw}" height="${Y(b.oy - 1.2) - y0}" rx="10" fill="#E6E2D6"/>`;
-    if (b.rails.includes('B+')) s += `<rect x="6" y="${Y(b.oy + 12.2)}" width="${bw}" height="${y1 - Y(b.oy + 12.2)}" rx="10" fill="#E6E2D6"/>`;
-    s += `<rect x="14" y="${Y(b.oy + 5.2)}" width="${bw - 16}" height="${P * 0.6}" rx="2" fill="#DAD5C6"/>`;
+    s += `<rect x="6" y="${y0}" width="${bw}" height="${y1 - y0}" rx="10" fill="${C.body}" stroke="${C.edge}" stroke-width="1.5"/>`;
+    if (b.rails.includes('T+')) s += `<rect x="6" y="${y0}" width="${bw}" height="${Y(b.oy - 1.2) - y0}" rx="10" fill="${C.rail}"/>`;
+    if (b.rails.includes('B+')) s += `<rect x="6" y="${Y(b.oy + 12.2)}" width="${bw}" height="${y1 - Y(b.oy + 12.2)}" rx="10" fill="${C.rail}"/>`;
+    s += `<rect x="14" y="${Y(b.oy + 5.2)}" width="${bw - 16}" height="${P * 0.6}" rx="2" fill="${C.channel}"/>`;
     const rl = (y, c) => s += `<line x1="${X(1) - 8}" y1="${Y(b.oy + y)}" x2="${X(b.cols) + 8}" y2="${Y(b.oy + y)}" stroke="${c}" stroke-width="2" opacity=".85"/>`;
-    if (b.rails.includes('T+')) { rl(-4.2, '#2C5DA8'); rl(-1.8, '#C8322E'); }
-    if (b.rails.includes('B+')) { rl(12.8, '#C8322E'); rl(15.2, '#2C5DA8'); }
-    for (const r of b.rails){ const c = r[1] === '+' ? '#C8322E' : '#2C5DA8', g = r[1] === '+' ? '+' : '−'; s += t(20, Y(b.oy + RAIL_Y[r]), g, c, 14, 600) + t(X(b.cols) + 20, Y(b.oy + RAIL_Y[r]), g, c, 14, 600); }
-    for (const [r, y] of Object.entries(ROW_Y)) s += t(20, Y(b.oy + y), r, '#8B8676', 10) + t(X(b.cols) + 20, Y(b.oy + y), r, '#8B8676', 10);
-    for (let c = 1; c <= b.cols; c++) if (c === 1 || c % 5 === 0) s += (b.rails.includes('T+') ? t(X(c), Y(b.oy - 1.25), c, '#8B8676', 9) : '') + (b.rails.includes('B+') ? t(X(c), Y(b.oy + 12.25), c, '#8B8676', 9) : '');
-    if (bs.length > 1) s += t(X(b.cols) - 30, Y(b.oy + 5.5), `board ${b.index}`, '#A39E8E', 9, 600);
+    if (b.rails.includes('T+')) { rl(-4.2, C.minus); rl(-1.8, C.plus); }
+    if (b.rails.includes('B+')) { rl(12.8, C.plus); rl(15.2, C.minus); }
+    for (const r of b.rails){ const c = r[1] === '+' ? C.plus : C.minus, g = r[1] === '+' ? '+' : '−'; s += t(20, Y(b.oy + RAIL_Y[r]), g, c, 14, 600) + t(X(b.cols) + 20, Y(b.oy + RAIL_Y[r]), g, c, 14, 600); }
+    for (const [r, y] of Object.entries(ROW_Y)) s += t(20, Y(b.oy + y), r, C.label, 10) + t(X(b.cols) + 20, Y(b.oy + y), r, C.label, 10);
+    for (let c = 1; c <= b.cols; c++) if (c === 1 || c % 5 === 0) s += (b.rails.includes('T+') ? t(X(c), Y(b.oy - 1.25), c, C.label, 9) : '') + (b.rails.includes('B+') ? t(X(c), Y(b.oy + 12.25), c, C.label, 9) : '');
+    if (bs.length > 1) s += t(X(b.cols) - 30, Y(b.oy + 5.5), `board ${b.index}`, C.tag, 9, 600);
   }
-  for (const [id] of state.holes){ const p = holeXY.get(id); s += `<rect x="${p.x - 3}" y="${p.y - 3}" width="6" height="6" rx="1.4" fill="#3D3B36"/>`; }
+  for (const [id] of state.holes){ const p = holeXY.get(id); s += `<rect x="${p.x - 3}" y="${p.y - 3}" width="6" height="6" rx="1.4" fill="${C.hole}"/>`; }
   L.board.innerHTML = s;
 }
 
@@ -223,7 +237,7 @@ function wireSVG(w){
   const d = wirePath(A, B, w.id), c = COLORS[w.color] || COLORS.green, isSel = sel && sel.type === 'wire' && sel.id === w.id;
   let s = `<g data-wire="${esc(w.id)}" data-net="${w.net ?? ''}">`;
   if (isSel) s += `<path d="${d}" stroke="#B8652A" stroke-width="11" fill="none" stroke-linecap="round" opacity=".45"/>`;
-  s += `<path d="${d}" stroke="rgba(0,0,0,.3)" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round" transform="translate(.8 1.5)"/><path d="${d}" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+  s += `<path d="${d}" stroke="${BOARDS[boardColour].halo ? 'rgba(255,255,255,.85)' : 'rgba(0,0,0,.3)'}" stroke-width="${BOARDS[boardColour].halo ? 7 : 6}" fill="none" stroke-linecap="round" stroke-linejoin="round"${BOARDS[boardColour].halo ? '' : ' transform="translate(.8 1.5)"'}/><path d="${d}" stroke="${c}" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
   s += `<circle cx="${A.x}" cy="${A.y}" r="2" fill="#B5B8BC"/><circle cx="${B.x}" cy="${B.y}" r="2" fill="#B5B8BC"/><path d="${d}" stroke="#000" stroke-opacity="0" stroke-width="14" fill="none" pointer-events="stroke"/>`;
   if (isSel) for (const [end, q] of [['from', A], ['to', B]]) s += `<circle data-handle="${end}" cx="${q.x}" cy="${q.y}" r="8" fill="#B8652A" fill-opacity=".25" stroke="#B8652A" stroke-width="2"/>`;
   return s + '</g>';
@@ -233,7 +247,7 @@ function wireSVG(w){
 function render(){
   if (!state) return;
   holeXY = new Map(); holeAt = new Map();
-  const key = JSON.stringify(state.boards);
+  const key = JSON.stringify(state.boards) + boardColour;
   if (key !== boardKey){ const bs = state.boards; minY = bs[0].oy + bs[0].top; }
   for (const [id, col, y] of state.holes){ holeXY.set(id, { x: X(col), y: Y(y), col, gy: y }); holeAt.set(`${col}|${Math.round(y * 10)}`, id); }
   if (key !== boardKey){ drawBoards(); boardKey = key; }
@@ -403,6 +417,14 @@ function setTool(t){ tool = t; wireStart = null; netPick = []; $('#t-select').se
 $('#t-select').onclick = () => setTool('select');
 $('#t-wire').onclick = () => setTool('wire');
 $('#t-net').onclick = () => setTool('net');
+$('#boardcolours').innerHTML = Object.entries(BOARDS).map(([k, c]) => `<button class="swatch" data-board="${k}" style="background:${c.body}" title="${c.name} board" aria-label="${c.name} board" aria-pressed="${k === boardColour}"></button>`).join('');
+$('#boardcolours').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-board]'); if (!b) return;
+  boardColour = b.dataset.board;
+  try { localStorage.setItem('bb-board', boardColour); } catch { /* storage blocked */ }
+  for (const x of $('#boardcolours').children) x.setAttribute('aria-pressed', x.dataset.board === boardColour);
+  render();
+});
 function applyTidy(){ $('#tidy').setAttribute('aria-pressed', tidy); }
 $('#tidy').onclick = () => { tidy = !tidy; try { localStorage.setItem('bb-tidy', tidy ? '1' : '0'); } catch { /* storage blocked */ } applyTidy(); render(); };
 applyTidy();
