@@ -53,3 +53,78 @@ test('the legacy file is only read for the shared file', async () => {
     assert.equal((await state(session)).name, 'Untitled');
   } finally { await shared.stop(); await session.stop(); }
 });
+
+// Two servers on one file. The second call follows the first one's write at once, well inside the 800 ms
+// file watcher's poll, so the guard (not the watcher) is what has to catch the change.
+const pair = async () => {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'bb-pair-'));
+  const file = path.join(dir, 'shared.json');
+  const env = { BREADBOARD_DESIGN: file };
+  const a = await startServer({ env }), b = await startServer({ env });
+  return { a, b, file, stop: async () => { await a.stop(); await b.stop(); } };
+};
+const parts = (file) => JSON.parse(fs.readFileSync(file, 'utf8')).parts.length;
+const BME = { type: 'bme280-3v3', at: 'f40' }, S3 = { type: 'esp32-s3-devkitc-1', at: 'b8' };
+const COUNTED = /^Another session changed this design \(now 1 parts, 0 wires\)\. Check it with get_design and repeat your edit\.$/;
+const UNREADABLE = /^Another session changed this design\. Check it with get_design and repeat your edit\.$/;
+
+test('an edit is refused after another server changed the file', async () => {
+  const p = await pair();
+  try {
+    assert.equal((await p.b.call('place_part', BME)).isError, false);
+    const before = fs.readFileSync(p.file, 'utf8');
+    const r = await p.a.call('place_part', S3);
+    assert.equal(r.isError, true);
+    assert.match(r.text, COUNTED);
+    assert.equal(fs.readFileSync(p.file, 'utf8'), before);
+    assert.match((await p.a.call('get_design')).text, /bme280-3v3/);
+    assert.equal((await p.a.call('place_part', S3)).isError, false);
+    assert.equal(parts(p.file), 2);
+  } finally { await p.stop(); }
+});
+
+test('the browser gets the same refusal', async () => {
+  const p = await pair();
+  try {
+    await p.b.call('place_part', BME);
+    const r = await fetch(`http://127.0.0.1:${p.a.port}/api/op`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-breadboard': '1' }, body: JSON.stringify({ op: 'remove_part', id: 'U1' }) });
+    const j = await r.json();
+    assert.equal(j.ok, false);
+    assert.match(j.error, /^Another session changed this design/);
+    assert.equal(parts(p.file), 1);
+  } finally { await p.stop(); }
+});
+
+test('undo is also guarded', async () => {
+  const p = await pair();
+  try {
+    await p.b.call('place_part', BME);
+    const r = await p.a.call('undo');
+    assert.equal(r.isError, true);
+    assert.match(r.text, COUNTED);
+  } finally { await p.stop(); }
+});
+
+test('a deleted file is not a conflict', async () => {
+  const p = await pair();
+  try {
+    await p.a.call('place_part', S3);
+    fs.unlinkSync(p.file);
+    assert.equal((await p.a.call('place_part', BME)).isError, false);
+    assert.ok(fs.existsSync(p.file));
+  } finally { await p.stop(); }
+});
+
+test('an unreadable file refuses once, without counts', async () => {
+  const p = await pair();
+  try {
+    await p.a.call('place_part', S3);
+    fs.writeFileSync(p.file, '{ not json');
+    const r = await p.a.call('place_part', BME);
+    assert.equal(r.isError, true);
+    assert.match(r.text, UNREADABLE);
+    assert.match((await p.a.call('get_design')).text, /esp32-s3-devkitc-1/);
+    assert.equal((await p.a.call('place_part', BME)).isError, false);
+    assert.equal(parts(p.file), 2);
+  } finally { await p.stop(); }
+});
