@@ -104,6 +104,14 @@ function userOp(op) {
       const r = mutate((d) => M.routeNets(d, { power: true }), { by, label: 'routed power' });
       return { added: r.wires.length, notes: r.notes };
     }
+    case 'route_net': {
+      const refs = Array.isArray(op.refs) ? op.refs.map(String) : [];
+      // Dry run first, as for route_power; it also reports a bad endpoint before anything changes.
+      const probe = M.routeNets(structuredClone(design), { nets: [refs] });
+      if (!probe.wires.length) return { added: 0, notes: probe.notes };
+      const r = mutate((d) => M.routeNets(d, { nets: [refs] }), { by, label: `routed ${refs.join(', ')}` });
+      return { added: r.wires.length, notes: r.notes };
+    }
     case 'undo': return undo(by);
     case 'redo': return redo(by);
     default: throw new M.ModelError(`Unknown edit "${op.op}".`);

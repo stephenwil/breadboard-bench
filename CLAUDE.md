@@ -49,6 +49,5 @@ Sessions here are for developing the server, model and viewer. Circuit design re
 - Rails that skip a hole every five, to match real boards.
 - More parts: classic ESP32-DevKitC, Pico, DHT22, relay, potentiometer.
 - An auto-layout helper that suggests where to place parts.
-- A net picker in the viewer (click pins to define a net, then route it). The viewer's Route power button already covers `power: true`.
 - Exporting a wiring list or schematic.
 - An ammeter or LED simulation in the viewer. The earlier claude.ai prototype had these.

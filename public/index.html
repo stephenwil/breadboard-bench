@@ -26,6 +26,7 @@ h1{font-family:'Barlow Semi Condensed','Barlow',system-ui,sans-serif;font-weight
 .live{margin-left:auto;font-size:.88rem;color:var(--ink-soft);display:flex;align-items:center;gap:6px}
 .dot{width:8px;height:8px;border-radius:50%;background:#8A8F96}
 .live.on .dot{background:#2E9E46;box-shadow:0 0 6px rgba(46,158,70,.7)}
+#netbar[hidden]{display:none!important}
 .toolbar{display:flex;align-items:center;gap:8px;padding:4px 18px 8px;flex-wrap:wrap}
 .btn{font:inherit;font-size:.92rem;font-weight:500;padding:6px 12px;border-radius:999px;border:1px solid var(--panel-line);background:var(--panel);color:var(--ink);cursor:pointer}
 .btn[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
@@ -69,6 +70,8 @@ kbd{font-family:inherit;font-size:.8rem;border:1px solid var(--panel-line);borde
 <div class="toolbar">
   <button class="btn" id="t-select" aria-pressed="true">Select</button>
   <button class="btn" id="t-wire" aria-pressed="false">Wire</button>
+  <button class="btn" id="t-net" aria-pressed="false" title="Pick pins, rails or holes that should be one net, then route them">Net</button>
+  <span id="netbar" hidden style="display:flex;gap:6px"><button class="btn" id="net-route" disabled>Route net</button><button class="btn" id="net-clear" disabled>Clear</button></span>
   <span id="swatches" style="display:flex;gap:6px"></span>
   <span class="sep"></span>
   <button class="btn" id="undo" disabled>Undo</button>
@@ -103,7 +106,7 @@ const $ = (s) => document.querySelector(s);
 const svg = $('#board'), L = {board:$('#L-board'), zone:$('#L-zone'), body:$('#L-body'), wires:$('#L-wires'), pins:$('#L-pins'), hl:$('#L-hl'), ui:$('#L-ui')};
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let state = null, boardKey = '', minY = 0, holeXY = new Map(), holeAt = new Map(), occupied = new Set();
-let tool = 'select', wireColor = 'green', wireStart = null, sel = null, drag = null;
+let tool = 'select', wireColor = 'green', wireStart = null, sel = null, drag = null, netPick = [];
 
 const X = (c) => MX + (c - 1) * P;
 const Y = (y) => 26 + (y - minY) * P;
@@ -238,6 +241,9 @@ function renderSelection(){
 function drawUI(){
   let s = '';
   if (wireStart){ const q = holeXY.get(wireStart); s += `<circle cx="${q.x}" cy="${q.y}" r="8" fill="none" stroke="${COLORS[wireColor]}" stroke-width="3"/>`; }
+  if (netPick.length) s += ring(netPick.map((x) => x.hole), '#E0A458');
+  $('#net-route').disabled = $('#net-clear').disabled = tool !== 'net' || netPick.length === 0;
+  $('#net-route').disabled ||= netPick.length < 2;
   L.ui.innerHTML = s;
 }
 function ring(holes, color){ return holes.map((h) => { const q = holeXY.get(h); return q ? `<rect x="${q.x - 6.5}" y="${q.y - 6.5}" width="13" height="13" rx="3" fill="${color}" fill-opacity=".16" stroke="${color}" stroke-width="2"/>` : ''; }).join(''); }
@@ -286,6 +292,18 @@ function newAnchor(p, dc, dy){
 
 svg.addEventListener('pointerdown', (e) => {
   if (!state || e.button > 0) return;
+  if (tool === 'net'){
+    const h = nearestHole(e); if (!h) return;
+    // A part's pin or a rail is named so the router can pick the exact hole; any other hole is used as it is.
+    let ref = h;
+    const pin = state.parts.flatMap((p) => p.pins.map((x) => ({ p, x }))).find(({ x }) => x.hole === h);
+    if (pin) ref = `${pin.p.id}.${pin.x.name}`;
+    else { const rail = /^((?:\d+:)?[TB][+-])\d+$/.exec(h); if (rail) ref = rail[1]; else if (occupied.has(h)) return toast('That hole already has a lead in it.'); }
+    const at = netPick.findIndex((x) => x.ref === ref);
+    if (at >= 0) netPick.splice(at, 1); else netPick.push({ ref, hole: h });
+    drawUI();
+    return;
+  }
   if (tool === 'wire'){
     const h = nearestHole(e); if (!h) return;
     if (!wireStart){ if (occupied.has(h)) return toast('That hole already has a lead in it.'); wireStart = h; drawUI(); }
@@ -346,9 +364,20 @@ svg.addEventListener('pointerleave', () => { if (!drag) highlight(null); });
 $('#checks').addEventListener('pointerover', (e) => { const li = e.target.closest('[data-check]'); if (li) highlight({ check: +li.dataset.check }); });
 $('#checks').addEventListener('pointerleave', () => highlight(null));
 
-function setTool(t){ tool = t; wireStart = null; $('#t-select').setAttribute('aria-pressed', t === 'select'); $('#t-wire').setAttribute('aria-pressed', t === 'wire'); svg.classList.toggle('wiring', t === 'wire'); $('#hint').innerHTML = t === 'wire' ? 'Click two holes to add a wire. <kbd>Esc</kbd> cancels.' : 'Drag parts and wire ends to move them. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.'; drawUI(); }
+function setTool(t){ tool = t; wireStart = null; netPick = []; $('#t-select').setAttribute('aria-pressed', t === 'select'); $('#t-wire').setAttribute('aria-pressed', t === 'wire'); $('#t-net').setAttribute('aria-pressed', t === 'net'); $('#netbar').hidden = t !== 'net'; svg.classList.toggle('wiring', t !== 'select'); $('#hint').innerHTML = t === 'wire' ? 'Click two holes to add a wire. <kbd>Esc</kbd> cancels.' : t === 'net' ? 'Click pins, rails or holes that belong on one net, then Route net (<kbd>Enter</kbd>). <kbd>Esc</kbd> clears.' : 'Drag parts and wire ends to move them. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.'; drawUI(); }
 $('#t-select').onclick = () => setTool('select');
 $('#t-wire').onclick = () => setTool('wire');
+$('#t-net').onclick = () => setTool('net');
+$('#net-clear').onclick = () => { netPick = []; drawUI(); };
+async function routeNet(){
+  if (netPick.length < 2) return;
+  const r = await op({ op: 'route_net', refs: netPick.map((x) => x.ref) });
+  if (!r) return;
+  netPick = []; drawUI();
+  const n = r.added;
+  toast([n ? `Routed: ${n} wire${n === 1 ? '' : 's'} added.` : 'Those are already connected.', ...(r.notes || [])].join(' '));
+}
+$('#net-route').onclick = routeNet;
 $('#swatches').addEventListener('click', (e) => { const b = e.target.closest('[data-color]'); if (b){ wireColor = b.dataset.color; render(); } });
 $('#undo').onclick = () => op({ op: 'undo' });
 $('#redo').onclick = () => op({ op: 'redo' });
@@ -370,7 +399,9 @@ document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key.toLowerCase() === 'z'){ e.preventDefault(); op({ op: e.shiftKey ? 'redo' : 'undo' }); return; }
   if (mod && e.key.toLowerCase() === 'y'){ e.preventDefault(); op({ op: 'redo' }); return; }
-  if (e.key === 'Escape'){ wireStart = null; sel = null; render(); return; }
+  if (e.key === 'Escape'){ wireStart = null; netPick = []; sel = null; render(); return; }
+  if (e.key === 'Enter' && tool === 'net'){ e.preventDefault(); return routeNet(); }
+  if (e.key === 'n' || e.key === 'N') return setTool(tool === 'net' ? 'select' : 'net');
   if (e.key === 'w' || e.key === 'W') return setTool(tool === 'wire' ? 'select' : 'wire');
   if (!sel) return;
   if (e.key === 'Delete' || e.key === 'Backspace'){ e.preventDefault(); op({ op: sel.type === 'wire' ? 'remove_wire' : 'remove_part', id: sel.id }); }

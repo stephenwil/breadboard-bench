@@ -57,6 +57,7 @@ A power module needs both rail pairs on one board, so it doesn't fit a joined pa
   - Change props, rotate or delete from the Selection panel.
   - Shortcuts: `R` rotates, `Del` removes.
 - **Wire mode** (`W` toggles it): click two holes to add a wire, after picking a colour.
+- **Net mode** (`N` toggles it): click pins, rails or holes that belong on one net, then Route net (`Enter`). A pin or rail lets the server pick the hole; a free hole is used exactly. Click a pick again to drop it, `Esc` clears. One undo reverts the route.
 - **Route power** wires every ground and supply pin to a rail of a fitting voltage (the same as `route_nets` with `power: true`). One undo reverts it.
 - **Undo and redo** cover both your edits and Claude's. Shortcuts: `Ctrl/Cmd+Z`, `Shift+Ctrl/Cmd+Z`.
 
