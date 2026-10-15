@@ -81,7 +81,7 @@ footer { font-size: 0.88rem; color: var(--muted); border-top: 1px solid var(--li
     <h2>From a sentence to a wired board</h2>
     <ol class="steps">
       <li><b>Ask Claude.</b> Describe what you want, for example "ESP32-S3 with a BME280 and a breadboard power supply".</li>
-      <li><b>Claude uses the MCP tools.</b> It places parts, adds wires and runs the design checks, then fixes what they flag.</li>
+      <li><b>Claude uses the MCP tools.</b> It places parts, routes or adds wires and runs the design checks, then fixes what they flag.</li>
       <li><b>Watch it live.</b> The viewer at <code>http://127.0.0.1:5178</code> redraws as each change lands.</li>
       <li><b>Edit by hand.</b> Drag parts, move wire ends, or add wires in the viewer. Your edits go through the same validation as Claude's, so a move into a taken hole is refused with the reason.</li>
       <li><b>Both stay in sync.</b> Claude is told when you have made edits and can read exactly what changed, then carry on from your version of the board.</li>
@@ -93,6 +93,7 @@ footer { font-size: 0.88rem; color: var(--muted); border-top: 1px solid var(--li
     <div class="feat">
       <div><h3>Layouts that fit the real board</h3><p>Holes under a module are unusable. Each strip connects five holes. Rails can be split in the middle. Pins that land in a taken hole, under a module or under the power module's overhang are reported.</p></div>
       <div><h3>Electrical checks, with the problem highlighted</h3><p>Short circuits, two supply voltages tied together, a supply back-feeding a USB-powered board, over- and undervoltage, unjoined grounds, I²C wiring and duplicate addresses, LEDs with no series resistor, and risky GPIOs (strapping, USB, UART0, flash/PSRAM pins). Hover a check in the viewer to see the holes it refers to.</p></div>
+      <div><h3>Auto-routing</h3><p>Give <code>route_nets</code> groups of pins, rails or holes that must be one net. It picks the wires, adds the fewest it can, skips what is already connected, and prefers short, straight wires that avoid crossing parts and each other. One undo reverts the whole route.</p></div>
       <div><h3>Undo and redo for both of you</h3><p>One shared history covers your edits and Claude's (the last 100 changes). Failed multi-step edits leave the design untouched.</p></div>
       <div><h3>Named saved designs</h3><p>Save, list and reopen designs by name. Each is a plain <code>&lt;name&gt;.json</code> file in a folder you can point at a git repo.</p></div>
       <div><h3>A part library with sourced pins</h3><p>Dev-board pin tables come from Espressif's user guides. Placement rules and props (power mode, module variant, pin order) are exposed to Claude through <code>list_parts</code>.</p></div>
@@ -162,7 +163,7 @@ npm install</code></pre>
       <li>Rails that skip a hole every five, to match real boards</li>
       <li>More parts: classic ESP32-DevKitC, Pico, DHT22, relay, potentiometer</li>
       <li>An auto-layout helper that suggests where to place parts</li>
-      <li>Auto-routing from a list of nets, instead of placing each wire</li>
+      <li>A route button in the viewer, so you can auto-route without asking Claude</li>
       <li>Export of a wiring list or schematic</li>
       <li>An ammeter or LED simulation in the viewer</li>
     </ul>
