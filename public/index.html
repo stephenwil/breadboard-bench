@@ -73,6 +73,8 @@ kbd{font-family:inherit;font-size:.8rem;border:1px solid var(--panel-line);borde
   <span class="sep"></span>
   <button class="btn" id="undo" disabled>Undo</button>
   <button class="btn" id="redo" disabled>Redo</button>
+  <span class="sep"></span>
+  <button class="btn" id="route-power" title="Wire every ground and supply pin to a rail of the right voltage">Route power</button>
   <span class="hint" id="hint">Drag parts and wire ends to move them. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.</span>
 </div>
 <div class="boardwrap">
@@ -254,12 +256,12 @@ function highlight(t){
 // ---------- editing ----------
 let toastTimer;
 function toast(m){ const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 4500); }
-async function op(body){
+async function op(body){ // resolves to the server's result object, or false on failure
   try {
     const r = await fetch('/api/op', { method: 'POST', headers: { 'content-type': 'application/json', 'x-breadboard': '1' }, body: JSON.stringify(body) });
     const j = await r.json();
     if (!j.ok) toast(j.error || 'That edit failed.');
-    return j.ok;
+    return j.ok ? (j.result ?? true) : false;
   } catch { toast('Lost connection to the server.'); return false; }
 }
 function svgPoint(e){ const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); }
@@ -350,6 +352,12 @@ $('#t-wire').onclick = () => setTool('wire');
 $('#swatches').addEventListener('click', (e) => { const b = e.target.closest('[data-color]'); if (b){ wireColor = b.dataset.color; render(); } });
 $('#undo').onclick = () => op({ op: 'undo' });
 $('#redo').onclick = () => op({ op: 'redo' });
+$('#route-power').onclick = async () => {
+  const r = await op({ op: 'route_power' });
+  if (!r) return;
+  const n = r.added;
+  toast([n ? `Routed power: ${n} wire${n === 1 ? '' : 's'} added.` : 'Power is already wired.', ...(r.notes || [])].join(' '));
+};
 $('#sel').addEventListener('click', (e) => {
   const b = e.target.closest('[data-act],[data-wirecolor]'); if (!b || !sel) return;
   if (b.dataset.wirecolor) return op({ op: 'set_wire_color', id: sel.id, color: b.dataset.wirecolor });

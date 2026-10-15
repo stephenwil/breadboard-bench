@@ -719,6 +719,8 @@ function powerJobs(design, layout, A) {
   return { jobs, notes };
 }
 
+// Mutates `design` as it goes, so a failure part-way leaves it half-routed. Call it only through
+// mutate() in server.js, which works on a copy and commits on success.
 export function routeNets(design, { nets = [], power = false } = {}) {
   if (!nets.length && !power) fail('Give at least one net, or set power to true.');
   const layout = boardLayout(design);

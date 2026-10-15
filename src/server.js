@@ -97,6 +97,13 @@ function userOp(op) {
     case 'move_wire_end': return mutate((d) => M.moveWireEnd(d, op), { by, label: `moved the ${op.end} end of ${op.id} to ${op.to}` });
     case 'set_wire_color': return mutate((d) => M.setWireColor(d, op), { by, label: `made ${op.id} ${op.color}` });
     case 'remove_wire': return mutate((d) => M.removeWire(d, op), { by, label: `removed wire ${op.id}` });
+    case 'route_power': {
+      // Dry run first so a button press with nothing to do doesn't add an empty undo step.
+      const probe = M.routeNets(structuredClone(design), { power: true });
+      if (!probe.wires.length) return { added: 0, notes: probe.notes };
+      const r = mutate((d) => M.routeNets(d, { power: true }), { by, label: 'routed power' });
+      return { added: r.wires.length, notes: r.notes };
+    }
     case 'undo': return undo(by);
     case 'redo': return redo(by);
     default: throw new M.ModelError(`Unknown edit "${op.op}".`);
@@ -126,7 +133,7 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; if (body.length > 1e5) req.destroy(); });
     req.on('end', () => {
-      try { userOp(JSON.parse(body)); json(200, { ok: true }); }
+      try { const result = userOp(JSON.parse(body)); json(200, { ok: true, result }); }
       catch (e) { json(200, { ok: false, error: e instanceof M.ModelError ? e.message : 'That edit failed.' }); if (!(e instanceof M.ModelError)) log(e); }
     });
     return;
