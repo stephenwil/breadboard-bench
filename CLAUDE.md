@@ -47,6 +47,20 @@ Sessions here are for developing the server, model and viewer. Circuit design re
   - The MB102 overhangs about four columns of the main area.
   - Rails have a hole in every column. Real rails skip one every five.
 
+## Known gaps
+Deferred from reviews; none loses data today. Fix when touching the area.
+- Design file guard (`server.js`):
+  - The stamp is taken after the file is read, so a write in that microsecond gap is missed.
+  - The stamp is only modification time and size. A same-size write within the timestamp granularity is missed, and a touch-only change (a sync or backup tool) gives a false refusal and clears undo. Compare content, or add inode and ctime.
+  - The temp file `<file>.tmp` has the same name in every process, so two processes writing at once can interleave. Use a pid-suffixed name.
+- Tests: temp `HOME` folders and design dirs made by `test/helpers/mcp.js` and `test/session.test.js` are never removed. The viewer's toast for a refused browser edit was not checked by eye.
+- Routing (`model.js`):
+  - `power: true` with nothing to power returns an empty success with no hint.
+  - `best` in the join loop is used without a null guard (it can't be null today).
+  - `scoreWire` recomputes footprints for every candidate pair, and `analyze()` runs once per added wire. Fine at current sizes.
+  - The split-rails and joined-boards routing tests only check column <= 32 and "no errors", not which rail is fed.
+- `CLAUDE_CODE_SESSION_ID` is assumed to stay the same when a session is resumed. It did across a restart; not seen on `--resume`.
+
 ## Ideas not done yet
 - Rails that skip a hole every five, to match real boards.
 - More parts: classic ESP32-DevKitC, Pico, DHT22, relay, potentiometer.
