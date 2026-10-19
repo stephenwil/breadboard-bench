@@ -3,6 +3,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as M from './model.js';
 
+// Which file a server keeps its live design in: an explicit override, else one file per Claude Code
+// session, else the shared file. A session id with anything but letters, digits, - and _ is ignored
+// so it can't point outside the sessions folder.
+export function designPathFor(env, home) {
+  const root = path.join(home, '.breadboard-bench');
+  if (env.BREADBOARD_DESIGN) return { file: env.BREADBOARD_DESIGN, kind: 'override' };
+  const id = env.CLAUDE_CODE_SESSION_ID;
+  if (id && /^[A-Za-z0-9_-]+$/.test(id)) return { file: path.join(root, 'sessions', `${id}.json`), kind: 'session' };
+  return { file: path.join(root, 'design.json'), kind: 'shared' };
+}
+
+// A short name for people to tell design files apart.
+export function designLabel(file, kind) {
+  const base = path.basename(file);
+  return kind === 'session' ? `session ${base.replace(/\.json$/, '').slice(0, 8)}` : base;
+}
+
 const fileFor = (dir, name) => path.join(dir, `${M.designFileName(name)}.json`);
 
 export function saveDesign(dir, name, design) {
