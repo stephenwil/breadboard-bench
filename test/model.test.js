@@ -70,3 +70,41 @@ test('v1 design files still load', () => {
   assert.equal(d.boards.length, 1);
   assert.equal(M.boardLayout(d)[0].cols, 30);
 });
+
+test('classic DevKitC: J2 and J3 pins match the Espressif tables', () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-devkitc-v4', at: 'd5' });
+  const pins = Object.fromEntries(M.analyze(d).layout[0].pins.map((p) => [p.key, p.name]));
+  assert.equal(Object.keys(pins).length, 38);
+  assert.equal(pins['J2.1'], '3V3');
+  assert.equal(pins['J2.2'], 'EN');
+  assert.equal(pins['J2.3'], 'GPIO36');
+  assert.equal(pins['J2.14'], 'GND');
+  assert.equal(pins['J2.19'], '5V');
+  assert.equal(pins['J3.1'], 'GND');
+  assert.equal(pins['J3.4'], 'TX (GPIO1)');
+  assert.equal(pins['J3.5'], 'RX (GPIO3)');
+  assert.equal(pins['J3.19'], 'GPIO6');
+  assert.ok(M.listParts().find((p) => p.type === 'esp32-devkitc-v4').pins.J2);
+});
+
+test('classic DevKitC: I2C on GPIO21/22 with a BME280 on a joined pair', () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-devkitc-v4', at: 'd5' });
+  M.placePart(d, { type: 'bme280-3v3', at: 'f40' });
+  M.routeNets(d, { nets: [['U2.SDA', 'U1.GPIO21'], ['U2.SCL', 'U1.GPIO22']], power: true });
+  assert.deepEqual(errors(d), []);
+  assert.ok(M.analyze(d).firmware.some((b) => b.sda === 21 && b.scl === 22));
+});
+
+test('classic DevKitC: flash pins are errors, WROVER reserves 16/17', () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-devkitc-v4', at: 'd5' });
+  M.placePart(d, { type: 'bme280-3v3', at: 'f40' });
+  M.addWire(d, { from: 'U2.SDA', to: 'U1.GPIO6' });
+  M.addWire(d, { from: 'U2.SCL', to: 'U1.GPIO16' });
+  assert.ok(errors(d).some((c) => /GPIO6\b/.test(c.message)), 'GPIO6 should be flagged');
+  assert.ok(!errors(d).some((c) => /GPIO16\b/.test(c.message)));
+  M.setPartProps(d, { id: 'U1', props: { module: 'wrover' } });
+  assert.ok(errors(d).some((c) => /GPIO16\b/.test(c.message)), 'GPIO16 should be flagged on WROVER');
+});

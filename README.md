@@ -43,7 +43,7 @@ Then open the viewer at <http://127.0.0.1:5178/>. If you're not sure of the addr
 ## Boards
 
 - **One board** (default): full size (63 columns) or half size (30).
-- **Two joined boards** (`new_design` with `boards: 2`): two boards pushed together with the facing rail strips removed. This is the usual way to fit an ESP32 DevKitC with both headers reachable. Put J1 in row d or e of board 1, and J3 lands in row a or b of board 2. Holes on board 2 are written with a prefix, like `2:a12` or `2:B-5`.
+- **Two joined boards** (`new_design` with `boards: 2`): two boards pushed together with the facing rail strips removed. This is the usual way to fit an ESP32 DevKitC with both headers reachable. Put the first header (J1, or J2 on the classic ESP32) in row d or e of board 1, and J3 lands in row a or b of board 2. Holes on board 2 are written with a prefix, like `2:a12` or `2:B-5`.
 - **Two separate boards** (`boards: 2, joined: false`): each keeps all four rails.
 
 A power module needs both rail pairs on one board, so it doesn't fit a joined pair. Power that setup over USB instead. The checks explain this if you try.
@@ -90,6 +90,7 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
 | --- | --- |
 | `esp32-s3-devkitc-1` | Pin tables from Espressif's v1.1 guide. Props: power (usb, 5v-pin or 3v3-pin), module variant (octal variants reserve GPIO35–37), and revision (which GPIO drives the RGB LED) |
 | `esp32-c5-devkitc-1` | v1.2 header table (boards from PW-2025-04-0446 on; v1.1 boards differ). Props: power, and psram (which takes GPIO15) |
+| `esp32-devkitc-v4` | Classic ESP32 (WROOM/WROVER). Header tables from Espressif's DevKitC V4 guide; strapping and input-only pins from the ESP32 datasheet. Props: power, and module (WROVER reserves GPIO16 and 17). GPIO6–11 are the internal flash |
 | `bme280-3v3` | 6-pin breakout with no regulator, so 3.3 V only |
 | `bme280-5v` | 4-pin breakout with a regulator, taking 3.3–5 V |
 | `ssd1306-oled` | 0.96 in I²C OLED, address 0x3C. Pin order varies between sellers, so set `order` to match yours |
