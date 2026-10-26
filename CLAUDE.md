@@ -40,6 +40,7 @@ Sessions here are for developing the server, model and viewer. Circuit design re
 
 ## Sources and assumptions
 - ESP32-S3-DevKitC-1 pins: Espressif's user guide, v1.1 header tables.
+- Classic ESP32-DevKitC V4 pins: Espressif ESP32-DevKitC V4 user guide (esp-dev-kits), J2 and J3 header tables. Strapping pins (0, 2, 5, 12, 15) and input-only pins (34–39) are from the ESP32 datasheet, not the guide.
 - ESP32-C5-DevKitC-1 pins: Espressif's user guide, v1.2 header tables. Boards from PW-2025-04-0446 on use these; v1.1 differs.
 - Assumed, not verified:
   - DevKitC header spacing of 1.0 in (`rowSpacing: 10`).
@@ -63,7 +64,7 @@ Deferred from reviews; none loses data today. Fix when touching the area.
 
 ## Ideas not done yet
 - Rails that skip a hole every five, to match real boards.
-- More parts: classic ESP32-DevKitC, Pico, DHT22, relay, potentiometer.
+- More parts: Pico, DHT22, relay, potentiometer.
 - An auto-layout helper that suggests where to place parts.
 - Cleaning up old session design files.
 - A design switcher in the viewer.

@@ -110,6 +110,7 @@ const devkitPin = (uart) => (label) => {
   if (label === '5V') return { role: 'power', volts: 5, name: '5V' };
   if (label === 'G') return { role: 'gnd', name: 'GND' };
   if (label === 'RST') return { role: 'en', name: 'RST' };
+  if (label === 'EN') return { role: 'en', name: 'EN' };
   if (label === 'NC') return { role: 'nc', name: 'NC' };
   if (label === 'TX') return { role: 'gpio', gpio: uart.TX, name: `TX (GPIO${uart.TX})` };
   if (label === 'RX') return { role: 'gpio', gpio: uart.RX, name: `RX (GPIO${uart.RX})` };
@@ -117,6 +118,7 @@ const devkitPin = (uart) => (label) => {
 };
 const POWER_PROP = { default: 'usb', options: ['usb', '5v-pin', '3v3-pin'], help: 'usb: powered from its USB port, so the 3V3 and 5V pins are outputs. 5v-pin or 3v3-pin: fed from the breadboard through that pin. Espressif lists these as mutually exclusive.' };
 const SPACING_NOTE = 'Header spacing is assumed to be 1.0 in. Check it against the dimension drawing for your board.';
+const headerNames = (lib) => lib.headerNames || ['J1', 'J3'];
 const OCTAL = ['N8R8', 'N16R8V', 'N32R8V', 'N32R16V'];
 
 export const LIBRARY = {
@@ -168,6 +170,32 @@ export const LIBRARY = {
       { gpios: [13, 14], level: 'warning', text: 'is a native USB data line; using it disables native USB' },
       { gpios: [11, 12], level: 'warning', text: 'is UART0, used for the serial console and flashing' },
       { gpios: [27], level: 'warning', text: 'also drives the onboard RGB LED' },
+    ],
+  },
+  'esp32-devkitc-v4': {
+    name: 'Espressif ESP32-DevKitC V4 (classic ESP32, WROOM/WROVER)',
+    kind: 'dual-header', mcu: true, prefix: 'U', short: 'ESP32',
+    description:
+      'Classic ESP32 dev board with two 19-pin headers, J2 and J3 (Espressif ESP32-DevKitC V4 user guide, header block tables). `at` is the hole for J2 pin 1 (3V3). Placement works like the S3 board: one header per board on a single breadboard, both headers on two joined boards with J2 in row d or e of board 1. ' +
+      'GPIO6–11 are the internal flash and are not usable. Strapping pins and input-only pins come from the ESP32 datasheet, not the DevKitC guide. VP and VN are shown as GPIO36 and GPIO39.',
+    headerNames: ['J2', 'J3'],
+    rowSpacing: 10, spacingNote: SPACING_NOTE,
+    headers: {
+      J2: ['3V3', 'EN', '36', '39', '34', '35', '32', '33', '25', '26', '27', '14', '12', 'G', '13', '9', '10', '11', '5V'],
+      J3: ['G', '23', '22', 'TX', 'RX', '21', 'G', '19', '18', '5', '17', '16', '4', '0', '2', '15', '8', '7', '6'],
+    },
+    pinInfo: devkitPin({ TX: 1, RX: 3 }),
+    ties: ['3V3', 'G'],
+    props: {
+      power: POWER_PROP,
+      module: { default: 'wroom', options: ['wroom', 'wrover'], help: 'Boards with an ESP32-WROVER module use GPIO16 and GPIO17 for PSRAM; only WROOM and SOLO-1 boards have them free.' },
+    },
+    gpioNotes: (props) => [
+      { gpios: [6, 7, 8, 9, 10, 11], level: 'error', text: 'is wired to the internal SPI flash, so it isn\'t available' },
+      ...(props.module === 'wrover' ? [{ gpios: [16, 17], level: 'error', text: 'is reserved for PSRAM on WROVER modules, so it isn\'t available' }] : []),
+      { gpios: [34, 35, 36, 39], level: 'warning', text: 'is input only, with no output driver or internal pull-up' },
+      { gpios: [0, 2, 5, 12, 15], level: 'warning', text: 'is a strapping pin, sampled at boot; driving it can stop the board booting or change its mode' },
+      { gpios: [1, 3], level: 'warning', text: 'is UART0, used for the serial console and flashing' },
     ],
   },
   'bme280-3v3': {
@@ -255,16 +283,16 @@ export function footprint(part, design, layout = boardLayout(design)) {
   if (lib.kind === 'dual-header') {
     const at = mainAt();
     const yB = at.y + dir * lib.rowSpacing;
-    const count = lib.headers.J1.length;
+    const [nameA, nameB] = headerNames(lib), count = lib.headers[nameA].length;
     for (let i = 0; i < count; i++) {
       const c = at.col + dir * i;
-      const h1 = sameRow(at, c, `J1 pin ${i + 1}`);
+      const h1 = sameRow(at, c, `${nameA} pin ${i + 1}`);
       const h3 = holeAtY(c, yB, design, layout);
       if (!h3) {
-        fail(`${part.id}: with J1 in ${at.id} the J3 header would land ${lib.rowSpacing} pitches ${dir > 0 ? 'below' : 'above'}, where there are no holes. ` +
-          (design.boards.length > 1 ? 'On two joined boards, put J1 in row d or e of board 1 with rotation 0.' : `With rotation ${dir > 0 ? 0 : 180} on one board, put J1 in row ${dir > 0 ? 'a or b' : 'i or j'}.`));
+        fail(`${part.id}: with ${nameA} in ${at.id} the ${nameB} header would land ${lib.rowSpacing} pitches ${dir > 0 ? 'below' : 'above'}, where there are no holes. ` +
+          (design.boards.length > 1 ? `On two joined boards, put ${nameA} in row d or e of board 1 with rotation 0.` : `With rotation ${dir > 0 ? 0 : 180} on one board, put ${nameA} in row ${dir > 0 ? 'a or b' : 'i or j'}.`));
       }
-      for (const [hdr, h] of [['J1', h1], ['J3', h3]]) {
+      for (const [hdr, h] of [[nameA, h1], [nameB, h3]]) {
         const label = lib.headers[hdr][i];
         pins.push({ key: `${hdr}.${i + 1}`, label, hole: h.id, ...lib.pinInfo(label) });
       }
@@ -1030,13 +1058,13 @@ export function boardInfo(design) {
     holes: 'Main holes are a1–j63: rows a–e are the top half, f–j the bottom half, with the centre gap between. Rails: T- (outer top), T+ (inner top), B+ (inner bottom), B- (outer bottom), numbered by column, e.g. T+5. Holes on board 2 take a prefix: 2:a12, 2:B-5.',
     connections: 'In each column, holes a–e connect, and f–j connect. Each rail is one connection along its length (split rails break in the middle). Separate boards are not connected unless wired.',
     wiring: 'add_wires ends can be a hole, a rail (T+, or 2:B- to pick a board; nearest free hole) or a part pin (U1.GPIO8, U2.SDA; a free hole in that pin\'s strip). Each hole holds one lead.',
-    layouts: 'ESP32 DevKitC boards cover the holes between their headers. On one board only one header stays reachable. new_design with boards: 2 gives two boards pushed together with the facing rails removed: put J1 in row d or e of board 1 (rotation 0) and J3 lands in row a or b of board 2, leaving free holes on both sides. A power module needs a board with both rail pairs, so a joined pair is usually powered over USB.',
+    layouts: 'ESP32 DevKitC boards cover the holes between their headers. On one board only one header stays reachable. new_design with boards: 2 gives two boards pushed together with the facing rails removed: put the first header (J1, or J2 on the classic ESP32) in row d or e of board 1 (rotation 0) and J3 lands in row a or b of board 2, leaving free holes on both sides. A power module needs a board with both rail pairs, so a joined pair is usually powered over USB.',
   };
 }
 export function listParts() {
   return Object.entries(LIBRARY).map(([type, l]) => ({
     type, name: l.name, kind: l.kind, description: l.description,
-    pins: l.kind === 'dual-header' ? { J1: l.headers.J1.join(' '), J3: l.headers.J3.join(' ') }
+    pins: l.kind === 'dual-header' ? Object.fromEntries(headerNames(l).map((h) => [h, l.headers[h].join(' ')]))
       : l.kind === 'rail-module' ? RAILS.join(' ')
         : l.kind === 'two-lead' ? l.leads.map((x) => `${x.key} (${x.name})`).join(', ')
           : l.kind === 'tactile' ? '1a 1b (left, always joined), 2a 2b (right, always joined)'
