@@ -6,6 +6,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import http from 'node:http';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import * as M from './model.js';
@@ -23,12 +24,14 @@ const HISTORY = 100;
 const log = (...a) => console.error('[breadboard-bench]', ...a);
 
 // ---------- state ----------
+let seen = null;
 let design = load();
 let rev = 1, viewUrl = null;
-// Modification time and size of the design file as this server last read or wrote it, to spot another
-// process changing it underneath us. null when the file doesn't exist.
-const stamp = () => { try { const st = fs.statSync(DESIGN_PATH); return `${st.mtimeMs}:${st.size}`; } catch { return null; } };
-let seen = stamp();
+// Hash of the design file's content as this server last read or wrote it, to spot another process changing
+// it underneath us. Content rather than modification time, so a same-size write in the same instant is seen
+// and a touch (a sync or backup tool) is not. null when the file doesn't exist.
+const hash = (text) => crypto.createHash('sha1').update(text).digest('hex');
+const stamp = () => { try { return hash(fs.readFileSync(DESIGN_PATH)); } catch { return null; } };
 const undoStack = [], redoStack = [];
 const userEdits = []; let userEditsSeen = 0; // edits made in the browser, for get_user_edits
 const clients = new Set();
@@ -39,15 +42,20 @@ function load() {
     file = LEGACY_DESIGN_PATH;
     log('no design at', DESIGN_PATH, '- loading', LEGACY_DESIGN_PATH);
   }
-  try { return M.normalizeDesign(JSON.parse(fs.readFileSync(file, 'utf8'))); }
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    if (file === DESIGN_PATH) seen = hash(text);
+    return M.normalizeDesign(JSON.parse(text));
+  }
   catch { return M.newDesign({ name: 'Untitled' }); }
 }
 function persist() {
   fs.mkdirSync(path.dirname(DESIGN_PATH), { recursive: true });
-  const tmp = DESIGN_PATH + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(design, null, 2));
+  const tmp = `${DESIGN_PATH}.${process.pid}.tmp`;
+  const text = JSON.stringify(design, null, 2);
+  fs.writeFileSync(tmp, text);
   fs.renameSync(tmp, DESIGN_PATH);
-  seen = stamp();
+  seen = hash(text); // what we wrote, so a replacement landing right after the rename still differs
 }
 const view = () => ({ ...M.buildView(design, { rev, canUndo: undoStack.length > 0, canRedo: redoStack.length > 0 }), file: DESIGN_LABEL });
 function broadcast() { const msg = `data: ${JSON.stringify(view())}\n\n`; for (const res of clients) res.write(msg); }
@@ -56,10 +64,11 @@ function commit() { rev++; persist(); broadcast(); }
 // Apply an edit to a copy; only a successful edit replaces the design and joins the undo history.
 // Replace the design with the file's contents. The history described the old design, so it is cleared.
 function reloadFromDisk() {
-  try { design = M.normalizeDesign(JSON.parse(fs.readFileSync(DESIGN_PATH, 'utf8'))); }
+  let text;
+  try { text = fs.readFileSync(DESIGN_PATH, 'utf8'); design = M.normalizeDesign(JSON.parse(text)); }
   catch { return false; /* half-written or deleted */ }
   undoStack.length = 0; redoStack.length = 0;
-  seen = stamp(); rev++; broadcast();
+  seen = hash(text); rev++; broadcast();
   return true;
 }
 // Refuse to edit a design that another process has changed since we last looked; nothing is overwritten.

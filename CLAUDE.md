@@ -22,7 +22,7 @@ Sessions here are for developing the server, model and viewer. Circuit design re
   - The HTTP side serves `/`, `/api/state`, SSE on `/api/events`, and `POST /api/op` for browser edits. That endpoint requires the `x-breadboard: 1` header.
   - Holds the undo and redo history and the log of user edits.
   - Saves each Claude Code session's design to `~/.breadboard-bench/sessions/<CLAUDE_CODE_SESSION_ID>.json`, created on the first edit. With no session id (Claude Desktop) it uses `~/.breadboard-bench/design.json`. `BREADBOARD_DESIGN` overrides both. The choice is `designPathFor()` in `designs.js`. For the shared file only: if it is missing and the pre-rename `~/.breadboard-mcp/design.json` exists, the old one is loaded (and saved to the new path on the next change).
-  - `guardExternal()` runs before every edit, undo and redo. If another process changed the file since this server last read or wrote it (`seen`, a time-and-size stamp), the server reloads it, clears the history and refuses the edit with a `ModelError`; nothing is overwritten.
+  - `guardExternal()` runs before every edit, undo and redo. If another process changed the file since this server last read or wrote it (`seen`, a hash of the file's content), the server reloads it, clears the history and refuses the edit with a `ModelError`; nothing is overwritten.
 - `src/designs.js`: named designs, one `<name>.json` per design in `~/.breadboard-bench/designs` (override with `BREADBOARD_DESIGNS_DIR`). Backs the `save_design`, `list_designs` and `open_design` tools. It also holds `designPathFor()` and `designLabel()`, which choose the live design file and its short name (shown in the viewer header and by `get_viewer_url`). File names go through `designFileName()` in `model.js` so a name can't escape the folder. The live working copy is a separate file per session, as above.
 - `public/index.html`: the viewer, in a single file with no build step. It draws the board from `buildView()` output and sends edits to `/api/op`.
 - `site/index.html`: the marketing page, a single static file deployed to GitHub Pages by `.github/workflows/pages.yml`. It is separate from `public/`, which the server serves. Keep its part list, checks, install commands and limitations in step with the model and README, and update it when a feature ships or a roadmap item lands. It is excluded from the npm package via `files` in `package.json`.
@@ -49,10 +49,6 @@ Sessions here are for developing the server, model and viewer. Circuit design re
 
 ## Known gaps
 Deferred from reviews; none loses data today. Fix when touching the area.
-- Design file guard (`server.js`):
-  - The stamp is taken after the file is read, so a write in that microsecond gap is missed.
-  - The stamp is only modification time and size. A same-size write within the timestamp granularity is missed, and a touch-only change (a sync or backup tool) gives a false refusal and clears undo. Compare content, or add inode and ctime.
-  - The temp file `<file>.tmp` has the same name in every process, so two processes writing at once can interleave. Use a pid-suffixed name.
 - Tests: temp `HOME` folders and design dirs made by `test/helpers/mcp.js` and `test/session.test.js` are never removed. The viewer's toast for a refused browser edit was not checked by eye.
 - Routing (`model.js`):
   - `power: true` with nothing to power returns an empty success with no hint.

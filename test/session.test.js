@@ -156,3 +156,37 @@ test('an external reload clears the undo history', async () => {
     assert.match(r.text, /Nothing to undo/);
   } finally { await p.stop(); }
 });
+
+test('touching the file without changing it is not a conflict', async () => {
+  const p = await pair();
+  try {
+    await p.a.call('place_part', S3);
+    const later = new Date(Date.now() + 60000);
+    fs.utimesSync(p.file, later, later);
+    assert.equal((await p.a.call('place_part', BME)).isError, false);
+    assert.equal((await p.a.call('undo')).isError, false);
+  } finally { await p.stop(); }
+});
+
+test('a same-size change with the old timestamp is still a conflict', async () => {
+  const p = await pair();
+  try {
+    await p.a.call('place_part', S3);
+    const st = fs.statSync(p.file);
+    const text = fs.readFileSync(p.file, 'utf8');
+    assert.ok(text.includes('"Untitled"'), 'the test needs a name to change');
+    fs.writeFileSync(p.file, text.replace('"Untitled"', '"Untitlee"'));
+    fs.utimesSync(p.file, st.atime, st.mtime);
+    const r = await p.a.call('place_part', BME);
+    assert.equal(r.isError, true);
+    assert.match(r.text, /^Another session changed this design/);
+  } finally { await p.stop(); }
+});
+
+test('saving leaves no temp file behind', async () => {
+  const p = await pair();
+  try {
+    await p.a.call('place_part', S3);
+    assert.deepEqual(fs.readdirSync(path.dirname(p.file)).filter((f) => f.includes('.tmp')), []);
+  } finally { await p.stop(); }
+});
