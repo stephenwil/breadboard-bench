@@ -42,6 +42,19 @@ test('BREADBOARD_DESIGN overrides the session file', async () => {
   } finally { await s.stop(); }
 });
 
+test('an existing design file is loaded at startup and can be edited straight away', async () => {
+  const home = fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'bb-load-'));
+  const file = path.join(home, '.breadboard-bench', 'sessions', `${ID}.json`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ version: 2, name: 'Mine', boards: [{ size: 'full', rails: 'both' }], parts: [], wires: [], nextWire: 1 }));
+  const s = await startServer({ home, env: { CLAUDE_CODE_SESSION_ID: ID } });
+  try {
+    assert.equal((await state(s)).name, 'Mine');
+    const r = await s.call('place_part', { type: 'led', at: 'a10', to: 'a12' });
+    assert.equal(r.isError, false, r.text);
+  } finally { await s.stop(); }
+});
+
 test('the legacy file is only read for the shared file', async () => {
   const home = fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'bb-leg-'));
   fs.mkdirSync(path.join(home, '.breadboard-mcp'), { recursive: true });

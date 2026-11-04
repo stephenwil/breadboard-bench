@@ -25,13 +25,13 @@ const log = (...a) => console.error('[breadboard-bench]', ...a);
 
 // ---------- state ----------
 let seen = null;
-let design = load();
-let rev = 1, viewUrl = null;
 // Hash of the design file's content as this server last read or wrote it, to spot another process changing
 // it underneath us. Content rather than modification time, so a same-size write in the same instant is seen
 // and a touch (a sync or backup tool) is not. null when the file doesn't exist.
 const hash = (text) => crypto.createHash('sha1').update(text).digest('hex');
 const stamp = () => { try { return hash(fs.readFileSync(DESIGN_PATH)); } catch { return null; } };
+let design = load(); // after hash, which load() uses
+let rev = 1, viewUrl = null;
 const undoStack = [], redoStack = [];
 const userEdits = []; let userEditsSeen = 0; // edits made in the browser, for get_user_edits
 const clients = new Set();
@@ -47,7 +47,10 @@ function load() {
     if (file === DESIGN_PATH) seen = hash(text);
     return M.normalizeDesign(JSON.parse(text));
   }
-  catch { return M.newDesign({ name: 'Untitled' }); }
+  catch (e) {
+    if (e.code !== 'ENOENT') log('could not load', file, '- starting with an empty design:', e.message);
+    return M.newDesign({ name: 'Untitled' });
+  }
 }
 function persist() {
   fs.mkdirSync(path.dirname(DESIGN_PATH), { recursive: true });
@@ -192,8 +195,10 @@ function listen(port, triesLeft) {
     if (e.code === 'EADDRINUSE' && triesLeft > 0) return listen(port + 1, triesLeft - 1);
     log('viewer could not start:', e.message);
   });
-  server.listen(port, HOST, () => { viewUrl = `http://${HOST === '0.0.0.0' ? os.hostname() : HOST}:${port}/`; log('viewer at', viewUrl); });
+  server.listen(port, HOST);
 }
+// One listener, not one per listen() call: a failed attempt's callback would otherwise fire when a later port binds.
+server.once('listening', () => { viewUrl = `http://${HOST === '0.0.0.0' ? os.hostname() : HOST}:${server.address().port}/`; log('viewer at', viewUrl); });
 listen(PORT, 10);
 
 // ---------- MCP tools ----------
