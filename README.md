@@ -80,7 +80,7 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
 | `undo`, `redo` | Step through the shared history |
 | `get_user_edits` | What you changed by hand in the viewer |
 | `get_design`, `get_nets` | Read back pins, holes, nets and wires |
-| `check_design` | All checks, plus a summary of the I²C buses |
+| `check_design` | All checks, plus a summary of the I²C buses (UART hints are among the checks) |
 | `save_design`, `list_designs`, `open_design` | Keep several designs. Each is saved as `<name>.json` in the designs folder; opening one replaces the current design (undo restores it), so save first if you want to keep it |
 | `get_viewer_url`, `load_design` | Get the viewer link, or replace the design with a design object |
 
@@ -94,6 +94,7 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
 | `bme280-3v3` | 6-pin breakout with no regulator, so 3.3 V only |
 | `bme280-5v` | 4-pin breakout with a regulator, taking 3.3–5 V |
 | `ssd1306-oled` | 0.96 in I²C OLED, address 0x3C. Pin order varies between sellers, so set `order` to match yours |
+| `gps-neo6m` | u-blox NEO-6M GPS breakout (GY-NEO6MV2 style) on UART at 9600 baud. VCC takes 3.3–5 V through the board's regulator. Pin order varies between sellers, so set `order` to match yours |
 | `mb102-power` | Breadboard power module. Each side's rail can be 5V, 3V3 or off |
 | `led` | `at` is the anode, `to` is the cathode |
 | `resistor` | Two leads, `at` and `to` |
@@ -114,6 +115,11 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
   - SDA and SCL shorted together.
   - The BME280's CSB pin tied low.
   - Two devices on one bus with the same address.
+- **UART (GPS):**
+  - The module's TX not reaching a GPIO.
+  - TX wired to the board's TX pin (or RX to RX) instead of crossed.
+  - TX and RX shorted together, or tied to a supply or ground.
+  - A `Serial1.begin(...)` line with the pins you used.
 - **Risky GPIOs:** strapping pins, USB data pins, UART0, the RGB LED pin, and pins reserved by flash or PSRAM.
 - **LEDs:** no series resistor, wired backwards, or shorted.
 - **Buttons:** wiring hints, such as using `INPUT_PULLUP`.

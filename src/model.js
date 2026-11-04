@@ -230,6 +230,17 @@ export const LIBRARY = {
     props: { order: { default: '', help: 'Comma-separated pin order, e.g. "VCC,GND,SCL,SDA".' } },
     address: () => ({ value: '0x3C', note: 'some modules use 0x3D' }),
   },
+  'gps-neo6m': {
+    name: 'u-blox NEO-6M GPS breakout, UART (4-pin, e.g. GY-NEO6MV2)',
+    kind: 'single-header', prefix: 'U', short: 'GPS',
+    description: 'NEO-6M GPS on a breakout board with a 3.3 V regulator, so VCC takes 3.3–5 V. Default pin order VCC, RX, TX, GND; sellers differ, so check yours and set props.order. ' +
+      'Wire the module\'s TX to a microcontroller GPIO used as UART RX, and its RX to a GPIO used as UART TX. Only TX is needed to read positions; RX is for configuring the module. ' +
+      'From the u-blox NEO-6 data sheet (GPS.G6-HW-09005): the NEO-6M module runs on 2.7–3.6 V with 3.3 V logic, and its UART defaults to 9600 baud, 8N1, NMEA output. ' +
+      'Assumed, not from u-blox: the breakout\'s regulator, its 3.3–5 V input range and the pin order (seller listings). PPS is not brought out on the 4-pin board.',
+    baud: 9600,
+    pins: [{ key: 'VCC', role: 'power-in', min: 3.0, max: 5.5 }, { key: 'RX', role: 'uart-rx' }, { key: 'TX', role: 'uart-tx' }, { key: 'GND', role: 'gnd-in' }],
+    props: { order: { default: '', help: 'Comma-separated pin order, e.g. "GND,TX,RX,VCC".' } },
+  },
   'mb102-power': {
     name: 'Breadboard power supply module (MB102 style)',
     kind: 'rail-module', prefix: 'PS', short: 'PSU',
@@ -541,6 +552,8 @@ function autoColor(design, holes) {
   if (v.length) return Math.max(...v) >= 5 ? 'red' : 'orange';
   if (pins.some((p) => p.role === 'sda')) return 'blue';
   if (pins.some((p) => p.role === 'scl')) return 'yellow';
+  if (pins.some((p) => p.role === 'uart-tx')) return 'white';
+  if (pins.some((p) => p.role === 'uart-rx')) return 'purple';
   return 'green';
 }
 export function addWire(design, { from, to, color }) {
@@ -992,6 +1005,33 @@ export function analyze(design) {
     for (const d of fixed) { if (seen.has(d.address)) add('warning', 'i2c-address', `${seen.get(d.address)} and ${d.part} both use I²C address ${d.address} on the same bus.`, d.holes); seen.set(d.address, d.part); }
     firmware.push(b);
     add('info', 'firmware', `${b.mcu} I²C bus: Wire.begin(${b.sda}, ${b.scl}); ${b.devices.map((d) => `${d.part} ${d.kind} at ${d.address}${d.note ? ` (${d.note})` : ''}`).join('; ')}.`, b.devices.flatMap((d) => d.holes));
+  }
+
+  // UART (module TX/RX)
+  for (const L of layout.filter((x) => x.pins.some((p) => p.role === 'uart-tx'))) {
+    const tx = L.pins.find((p) => p.role === 'uart-tx'), rx = L.pins.find((p) => p.role === 'uart-rx');
+    if (rx && tx.net === rx.net) { add('error', 'uart-short', `${L.part.id}'s TX and RX are connected together.`, [tx.hole, rx.hole]); continue; }
+    const g = {};
+    for (const p of [tx, rx].filter(Boolean)) {
+      if (p.net.ground || p.net.sources.length) { add('error', 'uart-power', `${ref(p)} is connected straight to ${p.net.name}. It's a 3.3 V logic pin: wire it to a GPIO.`, [p.hole]); continue; }
+      const gp = p.net.pins.filter((x) => x.role === 'gpio');
+      if (!gp.length) {
+        if (p === tx) add('error', 'uart-unconnected', `${ref(p)} isn't connected to a microcontroller GPIO, so no data reaches the board. Wire it to a GPIO used as UART RX.`, [p.hole]);
+        else add('info', 'uart-rx-open', `${ref(p)} is unconnected. That's fine for reading data; wire it to a GPIO used as UART TX only if you need to configure the module.`, [p.hole]);
+        continue;
+      }
+      if (gp.length > 1) continue; // gpio-short already reports this
+      if (gp[0].label === p.label) {
+        add('error', 'uart-crossed', `${ref(p)} goes to ${ref(gp[0])}, which is also a ${p.label === 'TX' ? 'transmit' : 'receive'} pin. Cross them: module TX to the board's RX side, module RX to its TX side.`, [p.hole, gp[0].hole]);
+        continue;
+      }
+      g[p.role] = gp[0];
+      noteGpio(gp[0], p === tx ? `UART RX from ${L.part.id} TX` : `UART TX to ${L.part.id} RX`);
+    }
+    const mcuRx = g['uart-tx'], mcuTx = g['uart-rx'];
+    if (mcuRx && (!mcuTx || mcuTx.part === mcuRx.part)) {
+      add('info', 'firmware', `${mcuRx.part} UART for ${L.part.id} ${L.lib.short}: Serial1.begin(${L.lib.baud || 9600}, SERIAL_8N1, ${mcuRx.gpio}, ${mcuTx ? mcuTx.gpio : -1}); (RX pin, then TX pin).`, [tx.hole, ...(rx && mcuTx ? [rx.hole] : [])]);
+    }
   }
 
   // LEDs and buttons

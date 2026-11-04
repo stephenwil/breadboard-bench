@@ -92,7 +92,7 @@ footer { font-size: 0.88rem; color: var(--muted); border-top: 1px solid var(--li
     <span class="label">Features</span>
     <div class="feat">
       <div><h3>Layouts that fit the real board</h3><p>Holes under a module are unusable. Each strip connects five holes. Rails can be split in the middle. Pins that land in a taken hole, under a module or under the power module's overhang are reported.</p></div>
-      <div><h3>Electrical checks, with the problem highlighted</h3><p>Short circuits, two supply voltages tied together, a supply back-feeding a USB-powered board, over- and undervoltage, unjoined grounds, I²C wiring and duplicate addresses, LEDs with no series resistor, and risky GPIOs (strapping, USB, UART0, flash/PSRAM pins). Hover a check in the viewer to see the holes it refers to.</p></div>
+      <div><h3>Electrical checks, with the problem highlighted</h3><p>Short circuits, two supply voltages tied together, a supply back-feeding a USB-powered board, over- and undervoltage, unjoined grounds, I²C wiring and duplicate addresses, UART TX/RX wired the wrong way round, LEDs with no series resistor, and risky GPIOs (strapping, USB, UART0, flash/PSRAM pins). Hover a check in the viewer to see the holes it refers to.</p></div>
       <div><h3>Auto-routing</h3><p>Give <code>route_nets</code> groups of pins, rails or holes that must be one net. It picks the wires, adds the fewest it can, skips what is already connected, and prefers short, straight wires that avoid crossing parts and each other. One undo reverts the whole route.</p></div>
       <div><h3>Undo and redo for both of you</h3><p>One shared history covers your edits and Claude's (the last 100 changes). Failed multi-step edits leave the design untouched.</p></div>
       <div><h3>Named saved designs</h3><p>Save, list and reopen designs by name. Each is a plain <code>&lt;name&gt;.json</code> file in a folder you can point at a git repo.</p></div>
@@ -122,6 +122,7 @@ footer { font-size: 0.88rem; color: var(--muted); border-top: 1px solid var(--li
       <tr><td><code>bme280-3v3</code></td><td>BME280 breakout, 6-pin, no regulator, 3.3 V only</td></tr>
       <tr><td><code>bme280-5v</code></td><td>BME280 breakout, 4-pin, with regulator, 3.3 to 5 V</td></tr>
       <tr><td><code>ssd1306-oled</code></td><td>0.96 in I²C OLED, address 0x3C. Pin order is configurable because sellers differ</td></tr>
+      <tr><td><code>gps-neo6m</code></td><td>u-blox NEO-6M GPS breakout on UART, 9600 baud, 3.3 to 5 V. Pin order is configurable because sellers differ</td></tr>
       <tr><td><code>mb102-power</code></td><td>MB102-style breadboard power module. Each rail can be 5V, 3V3 or off</td></tr>
       <tr><td><code>led</code></td><td>3 mm or 5 mm LED</td></tr>
       <tr><td><code>resistor</code></td><td>Two-lead resistor</td></tr>

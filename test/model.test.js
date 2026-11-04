@@ -108,3 +108,32 @@ test('classic DevKitC: flash pins are errors, WROVER reserves 16/17', () => {
   M.setPartProps(d, { id: 'U1', props: { module: 'wrover' } });
   assert.ok(errors(d).some((c) => /GPIO16\b/.test(c.message)), 'GPIO16 should be flagged on WROVER');
 });
+
+test('GPS: S3 + NEO-6M on UART, crossed correctly, with firmware hint', () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-s3-devkitc-1', at: 'd5' });
+  M.placePart(d, { type: 'gps-neo6m', at: 'f40' });
+  M.routeNets(d, { nets: [['U2.TX', 'U1.GPIO18'], ['U2.RX', 'U1.GPIO17']], power: true });
+  assert.deepEqual(errors(d), []);
+  const fw = M.analyze(d).checks.find((c) => c.code === 'firmware' && /Serial1/.test(c.message));
+  assert.match(fw.message, /Serial1\.begin\(9600, SERIAL_8N1, 18, 17\)/);
+});
+
+test('GPS: TX to TX, unconnected TX, TX on a supply and pin order', () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-s3-devkitc-1', at: 'd5' });
+  M.placePart(d, { type: 'gps-neo6m', at: 'f40' });
+  assert.ok(codes(d).includes('error:uart-unconnected'));
+  assert.ok(codes(d).includes('info:uart-rx-open'));
+  M.addWire(d, { from: 'U2.TX', to: 'U1.TX' });
+  assert.ok(codes(d).includes('error:uart-crossed'));
+
+  const e = M.newDesign();
+  M.placePart(e, { type: 'mb102-power', at: '1' });
+  M.placePart(e, { type: 'gps-neo6m', at: 'a40', props: { order: 'GND,TX,RX,VCC' } });
+  M.addWire(e, { from: 'U1.TX', to: 'T+' });
+  assert.ok(codes(e).includes('error:uart-power'));
+  const L = M.analyze(e).layout.find((x) => x.part.id === 'U1');
+  assert.deepEqual(L.pins.map((p) => p.key), ['GND', 'TX', 'RX', 'VCC']);
+  assert.throws(() => M.placePart(e, { type: 'gps-neo6m', at: 'a50', props: { order: 'VCC,TX,GND' } }), /props.order/);
+});
