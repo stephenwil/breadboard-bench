@@ -165,3 +165,36 @@ for (const hole of ['a50', 'T+5']) {
     assert.ok(joined(d, 'U2.SDA', 'U1.GPIO8'));
   });
 }
+
+// The play-folder layout: S3 on two joined boards over USB, with a BME280 and a GPS on board 1.
+const usbTwoBoards = () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-s3-devkitc-1', at: 'e5' });
+  M.placePart(d, { type: 'bme280-3v3', at: 'c35' });
+  M.placePart(d, { type: 'gps-neo6m', at: 'c45' });
+  M.routeNets(d, { nets: [['U2.SDA', 'U1.GPIO8'], ['U2.SCL', 'U1.GPIO9'], ['U2.CSB', 'U2.VCC'], ['U2.SDO', 'U2.GND'], ['U3.TX', 'U1.GPIO18'], ['U3.RX', 'U1.GPIO17']], power: true });
+  return d;
+};
+const isRail = (h) => /^(\d:)?[TB][+-]\d+$/.test(h);
+
+test('power mode wires every ground pin to a rail, not pin to pin', () => {
+  const d = usbTwoBoards();
+  assert.deepEqual(errors(d), []);
+  const sdo = (h) => /^[a-e]40$/.test(h); // U2.SDO's strip: its link to GND is a signal tie, not a supply wire
+  const gnd = d.wires.filter((w) => w.color === 'black' && !sdo(w.from) && !sdo(w.to));
+  assert.ok(gnd.length > 0);
+  for (const w of gnd) assert.ok(isRail(w.from) || isRail(w.to), `${w.id} ${w.from} -> ${w.to} should end on a rail`);
+});
+
+test('power mode grounds the rail nearest the parts, and only that one', () => {
+  const d = usbTwoBoards();
+  const rails = new Set(d.wires.filter((w) => w.color === 'black').flatMap((w) => [w.from, w.to]).filter(isRail).map((h) => h.replace(/\d+$/, '')));
+  assert.deepEqual([...rails], ['T-']);
+});
+
+test('a 3.3 V net is orange even when a part on it would take 5 V', () => {
+  const d = usbTwoBoards();
+  const supply = d.wires.filter((w) => w.color === 'red' || w.color === 'orange');
+  assert.ok(supply.length >= 3);
+  for (const w of supply) assert.equal(w.color, 'orange', `${w.id} ${w.from} -> ${w.to}`);
+});
