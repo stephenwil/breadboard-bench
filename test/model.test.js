@@ -137,3 +137,13 @@ test('GPS: TX to TX, unconnected TX, TX on a supply and pin order', () => {
   assert.deepEqual(L.pins.map((p) => p.key), ['GND', 'TX', 'RX', 'VCC']);
   assert.throws(() => M.placePart(e, { type: 'gps-neo6m', at: 'a50', props: { order: 'VCC,TX,GND' } }), /props.order/);
 });
+
+test('overvoltage is reported on a net with two clashing supplies, whichever comes first', () => {
+  const d = M.newDesign();
+  M.placePart(d, { type: 'mb102-power', at: '1', props: { top: '3V3', bottom: '5V' } });
+  M.placePart(d, { type: 'bme280-3v3', at: 'a40' });
+  M.addWire(d, { from: 'U1.VCC', to: 'T+' });
+  M.addWire(d, { from: 'T+20', to: 'B+20' }); // ties 5 V onto the 3.3 V net
+  assert.ok(codes(d).includes('error:supply-clash'));
+  assert.ok(codes(d).includes('error:overvoltage'), codes(d).join(', '));
+});

@@ -311,7 +311,7 @@ tool('load_design', 'Load a design', 'Replace the design with a design object (t
 tool('save_design', 'Save the design by name',
   'Save the current design as a named file so it can be opened later, for example before new_design or open_design replaces it. Saving under a name that already exists overwrites that file. Defaults to the design\'s own name.',
   { name: z.string().optional() },
-  ({ name }) => { const file = store.saveDesign(DESIGNS_DIR, name || design.name, design); return `Saved "${design.name}" to ${file}.`; });
+  ({ name }) => { const as = name || design.name, file = store.saveDesign(DESIGNS_DIR, as, design); return `Saved "${as}" to ${file}.`; });
 tool('list_designs', 'List saved designs', 'Designs saved with save_design, newest first, with board, part and wire counts.',
   {}, () => { const designs = store.listDesigns(DESIGNS_DIR); return designs.length ? { folder: DESIGNS_DIR, designs } : `No saved designs in ${DESIGNS_DIR}.`; });
 tool('open_design', 'Open a saved design',
