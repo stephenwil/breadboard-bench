@@ -203,3 +203,13 @@ test('saving leaves no temp file behind', async () => {
     assert.deepEqual(fs.readdirSync(path.dirname(p.file)).filter((f) => f.includes('.tmp')), []);
   } finally { await p.stop(); }
 });
+
+test('save_design reports the name it saved under', async () => {
+  const s = await startServer({ env: { CLAUDE_CODE_SESSION_ID: ID } });
+  try {
+    await s.call('new_design', { name: 'Draft' });
+    const r = await s.call('save_design', { name: 'kept-copy' });
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text, /^Saved "kept-copy" to .*kept-copy\.json/);
+  } finally { await s.stop(); }
+});
