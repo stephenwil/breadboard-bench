@@ -27,7 +27,8 @@ Sessions here are for developing the server, model and viewer. Circuit design re
 - `public/index.html`: the viewer, in a single file with no build step. It draws the board from `buildView()` output and sends edits to `/api/op`.
 - `site/index.html`: the marketing page, a single static file deployed to GitHub Pages by `.github/workflows/pages.yml`. It is separate from `public/`, which the server serves. Keep its part list, checks, install commands and limitations in step with the model and README, and update it when a feature ships or a roadmap item lands. It is excluded from the npm package via `files` in `package.json`.
 - `test/model.test.js`, `test/designs.test.js`, `test/route.test.js`: model, saved-design and routing tests, run with `npm test`.
-- `test/session.test.js`, `test/helpers/mcp.js`: start the real server over MCP against a temp `HOME` to test the file choice and the conflict guard. `npm test` runs them with the rest, about half a minute in all.
+- `test/session.test.js`, `test/helpers/mcp.js`: start the real server over MCP against a temp `HOME` to test the file choice and the conflict guard. `npm test` runs them with the rest, about a minute in all.
+- `.github/workflows/test.yml`: runs `npm ci && npm test` on Node 18 and 22 for every pull request and push to `main`.
 
 ## Conventions
 - stdout belongs to the MCP protocol. Log only to stderr (`console.error`).
