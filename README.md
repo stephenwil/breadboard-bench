@@ -1,5 +1,7 @@
 # Breadboard Bench
 
+[![Test](https://github.com/stephenwil/breadboard-bench/actions/workflows/test.yml/badge.svg)](https://github.com/stephenwil/breadboard-bench/actions/workflows/test.yml)
+
 An MCP server that lets Claude lay out, wire and check breadboard circuits, with a live viewer you can also edit in.
 
 Ask something like *"ESP32-S3 with a BME280, an OLED, a status LED and a button"*. Claude then:
