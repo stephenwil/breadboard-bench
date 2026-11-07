@@ -15,7 +15,7 @@ Sessions here are for developing the server, model and viewer. Circuit design re
   - Board geometry and hole parsing (`a12`, `T+5`, `2:b7` for board 2).
   - The part library (`LIBRARY`) and footprints.
   - Edit operations, which throw `ModelError` with messages written for the user.
-  - `routeNets()` and `scoreWire()`: auto-routing behind the `route_nets` tool. It joins groups of endpoints with the fewest wires, adding each through `addWire`. `scoreWire` is the neatness cost (length, straight bonus, penalty per hole under a part, penalty per crossing), with the weights in `ROUTE_WEIGHTS`. `power: true` builds ground and supply groups from the parts' pin roles. Spec and plan: `docs/superpowers/`.
+  - `routeNets()` and `scoreWire()`: auto-routing behind the `route_nets` tool. It joins groups of endpoints with the fewest wires, adding each through `addWire`. In a group with a rail endpoint, each wire must land on the rail (pins are never chained), falling back to any pair if no rail hole is reachable. `scoreWire` is the neatness cost (length, straight bonus, penalty per hole under a part, penalty per crossing), with the weights in `ROUTE_WEIGHTS`. `power: true` builds ground and supply groups from the parts' pin roles, choosing a rail by its total distance to the endpoints it serves. Spec and plan: `docs/superpowers/`.
   - `analyze()`: builds the netlist and runs every check.
   - `buildView()`: the JSON the browser renders.
 - `src/server.js`: the MCP server (stdio) plus an HTTP server for the viewer.
@@ -54,7 +54,6 @@ Deferred from reviews; none loses data today. Fix when touching the area.
 - Tests: temp `HOME` folders and design dirs made by `test/helpers/mcp.js` and `test/session.test.js` are never removed. The viewer's toast for a refused browser edit was not checked by eye.
 - Routing (`model.js`):
   - `power: true` with nothing to power returns an empty success with no hint.
-  - `best` in the join loop is used without a null guard (it can't be null today).
   - `scoreWire` recomputes footprints for every candidate pair, and `analyze()` runs once per added wire. Fine at current sizes.
   - The split-rails and joined-boards routing tests only check column <= 32 and "no errors", not which rail is fed.
 - `CLAUDE_CODE_SESSION_ID` is assumed to stay the same when a session is resumed. It did across a restart; not seen on `--resume`.
