@@ -21,6 +21,14 @@ test('a session gets its own file, created on the first edit', async () => {
   } finally { await s.stop(); }
 });
 
+test('the server reports the version from package.json', async () => {
+  const s = await startServer();
+  try {
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    assert.equal(s.version, pkg.version);
+  } finally { await s.stop(); }
+});
+
 test('without a session id the shared file is used', async () => {
   const s = await startServer();
   try {
