@@ -202,7 +202,8 @@ server.once('listening', () => { viewUrl = `http://${HOST === '0.0.0.0' ? os.hos
 listen(PORT, 10);
 
 // ---------- MCP tools ----------
-const mcp = new McpServer({ name: 'breadboard-bench', version: '0.2.0' });
+const { version } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const mcp = new McpServer({ name: 'breadboard-bench', version });
 const text = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
 const pendingEdits = () => userEdits.length - userEditsSeen;
 const tool = (name, title, description, inputSchema, fn) =>

@@ -29,6 +29,7 @@ Sessions here are for developing the server, model and viewer. Circuit design re
 - `test/model.test.js`, `test/designs.test.js`, `test/route.test.js`: model, saved-design and routing tests, run with `npm test`.
 - `test/session.test.js`, `test/helpers/mcp.js`: start the real server over MCP against a temp `HOME` to test the file choice and the conflict guard. `npm test` runs them with the rest, about a minute in all.
 - `.github/workflows/test.yml`: runs `npm ci && npm test` on Node 18 and 22 for every pull request and push to `main`.
+- `.github/workflows/release.yml`: on a `vX.Y.Z` tag, checks the tag against `package.json` and `CHANGELOG.md`, runs the tests, publishes to npm and creates a GitHub release. The steps are under "Releasing" in `CHANGELOG.md`.
 
 ## Conventions
 - stdout belongs to the MCP protocol. Log only to stderr (`console.error`).
@@ -37,6 +38,7 @@ Sessions here are for developing the server, model and viewer. Circuit design re
 - `ModelError` messages reach the user verbatim. They should say what went wrong and how to fix it.
 - Checks return `{ level: 'error' | 'warning' | 'info', code, message, holes }`. `holes` drives the highlight in the viewer.
 - Pin data must come from a primary source (manufacturer docs). Cite the source in the part's description, and flag anything assumed.
+- A pull request that changes what users see adds a line under `## [Unreleased]` in `CHANGELOG.md`. The version lives only in `package.json`; the server reads it from there.
 - After changing the model, run `npm test`. After changing the viewer, open it and check it by eye.
 
 ## Sources and assumptions

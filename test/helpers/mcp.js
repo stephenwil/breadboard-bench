@@ -25,5 +25,5 @@ export async function startServer({ env = {}, home = fs.mkdtempSync(path.join(os
     return { text: r.content.map((c) => c.text).join('\n'), isError: !!r.isError };
   };
   const port = Number(/:(\d+)\//.exec((await call('get_viewer_url')).text)[1]);
-  return { call, port, home, stop: () => client.close() };
+  return { call, port, home, version: client.getServerVersion()?.version, stop: () => client.close() };
 }
