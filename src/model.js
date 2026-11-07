@@ -548,8 +548,11 @@ function autoColor(design, holes) {
   const nets = holes.map((h) => a.netByStrip.get(stripOf(parseHole(h, design, layout), design, layout))).filter(Boolean);
   const pins = nets.flatMap((n) => n.pins);
   if (nets.some((n) => n.ground) || pins.some((p) => /gnd/.test(p.role))) return 'black';
-  const v = nets.flatMap((n) => n.sources.map((s) => s.volts)).concat(pins.filter((p) => p.role === 'power' || p.role === 'power-in').map((p) => p.volts ?? (p.max > 4 ? 5 : 3.3)));
-  if (v.length) return Math.max(...v) >= 5 ? 'red' : 'orange';
+  // The net's voltage: its sources and supply pins if it has any, else a guess from what the inputs on it accept.
+  const known = nets.flatMap((n) => n.sources.map((s) => s.volts)).concat(pins.filter((p) => p.role === 'power' && p.volts).map((p) => p.volts));
+  const inputs = pins.filter((p) => p.role === 'power-in');
+  const v = known.length ? Math.max(...known) : inputs.length ? (inputs.every((p) => (p.min ?? 3.3) <= 3.3) ? 3.3 : 5) : null;
+  if (v !== null) return v >= 5 ? 'red' : 'orange';
   if (pins.some((p) => p.role === 'sda')) return 'blue';
   if (pins.some((p) => p.role === 'scl')) return 'yellow';
   if (pins.some((p) => p.role === 'uart-tx')) return 'white';
@@ -643,7 +646,7 @@ function endpointOf(ref, design, layout) {
       for (let c = 1; c <= B.cols; c++) strips.add(stripOf(parseHole(prefix(B.index) + name + c, design, layout), design, layout));
     }
     if (!strips.size) fail(`There is no ${name} rail${rail[1] ? ` on board ${rail[1]}` : ''} in this design.`);
-    return { label: s, strips: [...strips], hole: null };
+    return { label: s, strips: [...strips], hole: null, rail: true };
   }
   const pm = /^([A-Za-z][\w-]*)\.(.+)$/.exec(s);
   if (pm) {
@@ -690,9 +693,16 @@ const railLabel = (strip) => { const [k, s] = strip.split(':'); return prefix(+k
 // Power mode: groups that wire every ground pin to a ground rail and every supply pin to a rail of a fitting voltage.
 function powerJobs(design, layout, A) {
   const holePt = (h) => { const p = parseHole(h, design, layout); return { x: p.col, y: p.y }; };
-  const centre = (strip) => { const pts = stripHoles(strip, design, layout).map(holePt); return { x: pts.reduce((s, q) => s + q.x, 0) / pts.length, y: pts.reduce((s, q) => s + q.y, 0) / pts.length }; };
-  const nearest = (list, from) => list.sort((a, b) => Math.hypot(centre(a.strip).x - from.x, centre(a.strip).y - from.y) - Math.hypot(centre(b.strip).x - from.x, centre(b.strip).y - from.y) || (a.strip < b.strip ? -1 : 1))[0];
-  const railEp = (strips) => ({ label: railLabel(strips[0]), strips, hole: null });
+  const railEp = (strips) => ({ label: railLabel(strips[0]), strips, hole: null, rail: true });
+  // The rail with the least total distance to the endpoints it will serve, so it sits by the parts rather than
+  // by whichever endpoint happens to come first.
+  const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const nearHoles = (strip) => stripHoles(strip, design, layout).map(holePt);
+  const closestTo = (list, eps) => {
+    const pts = eps.map((e) => e.strips.flatMap(nearHoles));
+    const cost = (r) => { const rp = nearHoles(r.strip); return pts.reduce((s, ps) => s + Math.min(...ps.flatMap((p) => rp.map((q) => dist2(p, q)))), 0); };
+    return list.map((r) => ({ r, c: cost(r) })).sort((a, b) => a.c - b.c || (a.r.strip < b.r.strip ? -1 : 1))[0].r;
+  };
   const labels = (eps) => eps.map((e) => e.label);
 
   const rails = [];
@@ -723,7 +733,7 @@ function powerJobs(design, layout, A) {
     let grounded = rails.filter((r) => r.ground);
     if (!grounded.length) {
       const minus = rails.filter((r) => r.name.endsWith('-'));
-      grounded = minus.length ? [nearest(minus, centre(gndEps[0].strips[0]))] : [];
+      grounded = minus.length ? [closestTo(minus, gndEps)] : [];
     }
     const eps = [...gndEps, ...grounded.map((r) => railEp([r.strip]))];
     if (eps.length > 1) jobs.push({ eps, tag: 'Power', given: labels(eps) });
@@ -750,7 +760,7 @@ function powerJobs(design, layout, A) {
       const src = usb.find((u) => u.volts === v), srcEp = endpointOf(src.ref, design, layout);
       const spare = rails.filter((r) => r.name.endsWith('+') && r.volts === null && !r.ground && !used.has(r.strip));
       if (!spare.length) fail(`No spare + rail to carry ${v} V from ${src.ref}. Use a board with more rails, or wire it by hand.`);
-      const rail = nearest(spare, centre(srcEp.strips[0]));
+      const rail = closestTo(spare, [srcEp, ...byVolts.get(v)]);
       used.add(rail.strip);
       notes.push(`fed ${railLabel(rail.strip)} from ${src.ref}`);
       const eps = [srcEp, railEp([rail.strip]), ...byVolts.get(v)];
@@ -781,10 +791,12 @@ export function routeNets(design, { nets = [], power = false } = {}) {
       if (comps.length === 1) { if (!added) satisfied.push(given); break; }
       const occ = occupancy(design), avoid = overhangSet(design, layout);
       const free = (strip) => stripHoles(strip, design, layout).filter((h) => !occ.has(h) && !avoid.has(h));
-      // Every candidate hole of a component, optionally pruning long strips towards a point.
-      const candidates = (comp, toward) => {
+      // Every candidate hole of a component, optionally pruning long strips towards a point. railOnly keeps
+      // the component's rail endpoints only, so a wire lands on the rail rather than on a pin already joined to it.
+      const candidates = (comp, toward, railOnly = false) => {
         const out = [];
         for (const ep of comp) {
+          if (railOnly && !ep.rail) continue;
           if (ep.hole && mine.has(ep.hole)) { out.push(...free(ep.strips[0])); continue; } // already wired: any free hole of its strip is the same net
           if (ep.hole) { if (occ.has(ep.hole)) fail(`${tag}: Hole ${ep.hole} is taken: ${describeOcc(occ.get(ep.hole))}.`); out.push(ep.hole); continue; }
           for (const st of ep.strips) {
@@ -800,15 +812,24 @@ export function routeNets(design, { nets = [], power = false } = {}) {
       };
       const all = comps.map((c) => candidates(c, null));
       comps.forEach((c, i) => { if (!all[i].length) fail(`${tag}: No free hole left for ${c[0].label}. Move a part, or use two joined boards.`); });
-      let best = null;
-      for (let i = 0; i < comps.length; i++) for (let j = i + 1; j < comps.length; j++) {
-        const xs = candidates(comps[i], centre(all[j])), ys = candidates(comps[j], centre(all[i]));
-        for (const hx of xs) for (const hy of ys) {
-          if (hx === hy) continue;
-          const score = scoreWire(design, hx, hy), key = `${hx}|${hy}`;
-          if (!best || score < best.score || (score === best.score && key < best.key)) best = { score, key, from: hx, to: hy };
+      // With a rail in the group, wire each piece to the rail (as on a real board) instead of chaining pin to
+      // pin. If no rail hole can be reached, fall back to the cheapest wire between any two pieces.
+      const hasRail = comps.map((c) => c.some((ep) => ep.rail));
+      const search = (railFirst) => {
+        let best = null;
+        for (let i = 0; i < comps.length; i++) for (let j = i + 1; j < comps.length; j++) {
+          if (railFirst && !hasRail[i] && !hasRail[j]) continue;
+          const xs = candidates(comps[i], centre(all[j]), railFirst && hasRail[i]), ys = candidates(comps[j], centre(all[i]), railFirst && hasRail[j]);
+          for (const hx of xs) for (const hy of ys) {
+            if (hx === hy) continue;
+            const score = scoreWire(design, hx, hy), key = `${hx}|${hy}`;
+            if (!best || score < best.score || (score === best.score && key < best.key)) best = { score, key, from: hx, to: hy };
+          }
         }
-      }
+        return best;
+      };
+      const best = (hasRail.some(Boolean) && search(true)) || search(false);
+      if (!best) fail(`${tag}: Couldn't find two free holes to join ${comps.map((c) => c[0].label).join(' and ')}. Move a part, or use two joined boards.`);
       try { const w = addWire(design, { from: best.from, to: best.to }); wires.push(w); mine.add(w.from).add(w.to); }
       catch (e) { if (e instanceof ModelError) throw new ModelError(`${tag}: ${e.message}`); throw e; }
       added++;
