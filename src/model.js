@@ -970,9 +970,10 @@ export function analyze(design) {
     if (p.role !== 'power-in' || p.net.ground) continue;
     if (!p.net.sources.length) add('error', 'unpowered', `${ref(p)} isn't connected to a supply.`, [p.hole]);
     else {
-      const v = p.net.sources[0].volts;
-      if (v > p.max) add('error', 'overvoltage', `${ref(p)} gets ${v} V but takes at most ${p.max} V.${L.part.type === 'bme280-3v3' ? ' This BME280 board has no regulator: feed it from 3.3 V.' : ''}`, [p.hole]);
-      if (v < p.min) add('error', 'undervoltage', `${ref(p)} gets ${v} V but needs at least ${p.min} V.`, [p.hole]);
+      // A net with clashing supplies (reported as supply-clash) is checked against each end, not just the first source.
+      const vs = p.net.sources.map((s) => s.volts), hi = Math.max(...vs), lo = Math.min(...vs);
+      if (hi > p.max) add('error', 'overvoltage', `${ref(p)} gets ${hi} V but takes at most ${p.max} V.${L.part.type === 'bme280-3v3' ? ' This BME280 board has no regulator: feed it from 3.3 V.' : ''}`, [p.hole]);
+      if (lo < p.min) add('error', 'undervoltage', `${ref(p)} gets ${lo} V but needs at least ${p.min} V.`, [p.hole]);
     }
   }
 
