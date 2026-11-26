@@ -599,38 +599,145 @@ export function removeWire(design, { id }) {
   if (i < 0) fail(`No wire called ${id}.`);
   design.wires.splice(i, 1);
 }
+export function removeWires(design, ids) {
+  if (!Array.isArray(ids) || !ids.length) fail('Give at least one wire id to remove.');
+  const seen = new Set();
+  for (const id of ids) {
+    if (!design.wires.some((w) => w.id === id)) fail(`No wire called ${id}.`);
+    seen.add(id);
+  }
+  design.wires = design.wires.filter((w) => !seen.has(w.id));
+  return [...seen];
+}
 
 // ---------- routing ----------
 // Weights are in pitch units (0.1 in).
 export const ROUTE_WEIGHTS = { overPart: 6, crossing: 2, straight: -1, partMargin: 0.6, endMargin: 0.5, candidates: 12 };
 
-// Neatness cost of a wire between two holes: lower is tidier. Length, a bonus for running straight along a
-// row or column, a penalty per hole under a part that the wire passes over, and one per wire it crosses.
-export function scoreWire(design, fromHole, toHole) {
-  const W = ROUTE_WEIGHTS, layout = boardLayout(design);
-  const pt = (id) => { const h = parseHole(id, design, layout); return { x: h.col, y: h.y }; };
-  const A = pt(fromHole), B = pt(toHole), dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy);
-  let cost = len;
-  if (A.x === B.x || A.y === B.y) cost += W.straight;
+const segSide = (P, Q, R) => { const c = (Q.x - P.x) * (R.y - P.y) - (Q.y - P.y) * (R.x - P.x); return Math.abs(c) < 1e-9 ? 0 : Math.sign(c); };
+const segmentsCross = (A, B, C, D) => segSide(A, B, C) * segSide(A, B, D) < 0 && segSide(C, D, A) * segSide(C, D, B) < 0;
 
+// Liang-Barsky segment vs axis-aligned bounding box check (strict interior intersection).
+function segmentHitsBox(A, B, box) {
+  const dx = B.x - A.x, dy = B.y - A.y;
+  let t0 = 0, t1 = 1;
+  const clip = (p, q) => {
+    if (Math.abs(p) < 1e-9) return q >= 0;
+    const r = q / p;
+    if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+    else { if (r < t0) return false; if (r < t1) t1 = r; }
+    return true;
+  };
+  return clip(-dx, A.x - box.c0) && clip(dx, box.c1 - A.x) && clip(-dy, A.y - box.y0) && clip(dy, box.y1 - A.y) && (t1 - t0 > 1e-6);
+}
+
+function underPartHoles(design, layout) {
   const under = new Set();
   for (const part of design.parts) {
     try { const fp = footprint(part, design, layout); for (const h of [...fp.covered, ...fp.overhang]) under.add(h); } catch { /* bad placement is reported by analyze */ }
   }
+  return under;
+}
+
+function partBodyBoxes(design, layout, { onlyUncovered = false } = {}) {
+  const boxes = [];
+  for (const part of design.parts) {
+    try {
+      const fp = footprint(part, design, layout);
+      if (!fp.body) continue;
+      if (onlyUncovered && (fp.covered.length || fp.overhang.length)) continue;
+      boxes.push(fp.body);
+    } catch { /* bad placement is reported by analyze */ }
+  }
+  return boxes;
+}
+
+function holesCrossedOverPts(A, B, underPts) {
+  const W = ROUTE_WEIGHTS, dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy);
+  let hits = 0;
   if (len > 2 * W.endMargin) {
-    for (const id of under) {
-      const p = pt(id), t = ((p.x - A.x) * dx + (p.y - A.y) * dy) / len; // distance along the wire
-      if (t >= W.endMargin && t <= len - W.endMargin && Math.abs((p.x - A.x) * dy - (p.y - A.y) * dx) / len <= W.partMargin) cost += W.overPart;
+    for (const p of underPts) {
+      const t = ((p.x - A.x) * dx + (p.y - A.y) * dy) / len; // distance along the wire
+      if (t >= W.endMargin && t <= len - W.endMargin && Math.abs((p.x - A.x) * dy - (p.y - A.y) * dx) / len <= W.partMargin) hits++;
     }
   }
+  return hits;
+}
 
-  const side = (P, Q, R) => { const c = (Q.x - P.x) * (R.y - P.y) - (Q.y - P.y) * (R.x - P.x); return Math.abs(c) < 1e-9 ? 0 : Math.sign(c); };
-  for (const w of design.wires) {
-    if (!parseHole(w.from, design, layout) || !parseHole(w.to, design, layout)) continue;
-    const C = pt(w.from), D = pt(w.to);
-    if (side(A, B, C) * side(A, B, D) < 0 && side(C, D, A) * side(C, D, B) < 0) cost += W.crossing; // proper crossing only
+function buildScoreCtx(design, layout = boardLayout(design)) {
+  const cache = new Map();
+  const pt = (id) => {
+    let p = cache.get(id);
+    if (p === undefined) { const h = parseHole(id, design, layout); p = h ? { x: h.col, y: h.y } : null; cache.set(id, p); }
+    return p;
+  };
+  const underPts = [...underPartHoles(design, layout)].map(pt).filter(Boolean);
+  const boxes = partBodyBoxes(design, layout, { onlyUncovered: true });
+  const wireSegs = design.wires.map((w) => [pt(w.from), pt(w.to)]).filter(([C, D]) => C && D);
+  return { layout, pt, underPts, boxes, wireSegs };
+}
+
+// Neatness cost of a wire between two holes: lower is tidier. Length, a bonus for running straight along a
+// row or column, a penalty per hole under a part that the wire passes over, a penalty for crossing upright/tactile
+// part bodies, and one per wire it crosses.
+export function scoreWire(design, fromHole, toHole, ctx = null) {
+  const W = ROUTE_WEIGHTS, c = ctx || buildScoreCtx(design);
+  const A = c.pt(fromHole), B = c.pt(toHole), dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy);
+  let cost = len;
+  if (A.x === B.x || A.y === B.y) cost += W.straight;
+
+  cost += holesCrossedOverPts(A, B, c.underPts) * W.overPart;
+  for (const box of c.boxes) {
+    if (segmentHitsBox(A, B, box)) cost += 2 * W.overPart;
+  }
+
+  for (const [C, D] of c.wireSegs) {
+    if (segmentsCross(A, B, C, D)) cost += W.crossing; // proper crossing only
   }
   return cost;
+}
+
+// Layout neatness metrics for agents and visual polish passes.
+export function layoutMetrics(design, analysis = analyze(design)) {
+  const layout = boardLayout(design);
+  const pt = (id) => { const h = parseHole(id, design, layout); return h ? { x: h.col, y: h.y } : null; };
+  const underPts = [...underPartHoles(design, layout)].map(pt).filter(Boolean);
+  const boxes = partBodyBoxes(design, layout);
+  const valid = design.wires.map((w) => ({ w, A: pt(w.from), B: pt(w.to) })).filter((x) => x.A && x.B);
+  const crossingPairs = [];
+  for (let i = 0; i < valid.length; i++) {
+    for (let j = i + 1; j < valid.length; j++) {
+      if (segmentsCross(valid[i].A, valid[i].B, valid[j].A, valid[j].B)) crossingPairs.push([valid[i].w.id, valid[j].w.id]);
+    }
+  }
+  const wiresOverParts = [];
+  let totalWireLength = 0, straightWires = 0, longestWire = null;
+  const powerColorMismatches = [];
+  for (const { w, A, B } of valid) {
+    const len = Math.hypot(B.x - A.x, B.y - A.y);
+    totalWireLength += len;
+    if (A.x === B.x || A.y === B.y) straightWires++;
+    if (!longestWire || len > longestWire.length) longestWire = { id: w.id, from: w.from, to: w.to, length: Math.round(len * 10) / 10 };
+    if (holesCrossedOverPts(A, B, underPts) > 0 || boxes.some((b) => segmentHitsBox(A, B, b))) wiresOverParts.push(w.id);
+    const net = analysis.netByStrip.get(stripOf(parseHole(w.from, design, layout), design, layout));
+    if (net) {
+      if (net.ground && w.color !== 'black') powerColorMismatches.push({ id: w.id, color: w.color, expected: 'black', net: net.name });
+      else if (!net.ground && net.volts === 5 && w.color !== 'red') powerColorMismatches.push({ id: w.id, color: w.color, expected: 'red', net: net.name });
+      else if (!net.ground && net.volts === 3.3 && w.color !== 'orange' && w.color !== 'red') powerColorMismatches.push({ id: w.id, color: w.color, expected: 'orange', net: net.name });
+    }
+  }
+  return {
+    parts: design.parts.length,
+    wires: design.wires.length,
+    wireCrossings: crossingPairs.length,
+    crossingPairs,
+    wiresOverParts,
+    straightWires,
+    totalWireLength: Math.round(totalWireLength * 10) / 10,
+    avgWireLength: valid.length ? Math.round((totalWireLength / valid.length) * 10) / 10 : 0,
+    longestWire,
+    powerColorMismatches,
+  };
 }
 
 // An endpoint is one exact hole, or a set of strips the router may pick a free hole from.
@@ -691,19 +798,47 @@ function routeComponents(eps, analysis) {
 const railLabel = (strip) => { const [k, s] = strip.split(':'); return prefix(+k) + s.slice(0, 2); };
 
 // Power mode: groups that wire every ground pin to a ground rail and every supply pin to a rail of a fitting voltage.
-function powerJobs(design, layout, A) {
+function powerJobs(design, layout, A, userJobs = []) {
   const holePt = (h) => { const p = parseHole(h, design, layout); return { x: p.col, y: p.y }; };
   const railEp = (strips) => ({ label: railLabel(strips[0]), strips, hole: null, rail: true });
   // The rail with the least total distance to the endpoints it will serve, so it sits by the parts rather than
   // by whichever endpoint happens to come first.
   const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   const nearHoles = (strip) => stripHoles(strip, design, layout).map(holePt);
+  const epDistToRail = (ep, r) => {
+    const rp = nearHoles(r.strip), ps = ep.strips.flatMap(nearHoles);
+    return Math.min(...ps.flatMap((p) => rp.map((q) => dist2(p, q))));
+  };
   const closestTo = (list, eps) => {
-    const pts = eps.map((e) => e.strips.flatMap(nearHoles));
-    const cost = (r) => { const rp = nearHoles(r.strip); return pts.reduce((s, ps) => s + Math.min(...ps.flatMap((p) => rp.map((q) => dist2(p, q)))), 0); };
+    const cost = (r) => eps.reduce((s, ep) => s + epDistToRail(ep, r), 0);
     return list.map((r) => ({ r, c: cost(r) })).sort((a, b) => a.c - b.c || (a.r.strip < b.r.strip ? -1 : 1))[0].r;
   };
+  const pickRails = (list, eps, forcedStrips = new Set(), maxRails = list.length) => {
+    if (!list.length) return [];
+    const chosen = new Map();
+    for (const r of list) {
+      if (chosen.size >= maxRails) break;
+      if (forcedStrips.has(r.strip)) chosen.set(r.strip, r);
+    }
+    if (eps.length) {
+      const counts = new Map();
+      for (const ep of eps) {
+        const best = list.map((r) => ({ r, d: epDistToRail(ep, r) }))
+          .sort((a, b) => a.d - b.d || (a.r.strip < b.r.strip ? -1 : 1))[0].r;
+        counts.set(best.strip, (counts.get(best.strip) || 0) + 1);
+      }
+      const byNeed = [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+      for (const [st] of byNeed) {
+        if (chosen.size >= maxRails) break;
+        if (!chosen.has(st)) chosen.set(st, list.find((r) => r.strip === st));
+      }
+    }
+    return [...chosen.values()].sort((a, b) => (a.strip < b.strip ? -1 : 1));
+  };
   const labels = (eps) => eps.map((e) => e.label);
+
+  const userRailStrips = new Set();
+  for (const j of userJobs) for (const ep of j.eps) if (ep.rail) for (const st of ep.strips) userRailStrips.add(st);
 
   const rails = [];
   for (const B of layout) for (const name of B.rails) {
@@ -730,10 +865,14 @@ function powerJobs(design, layout, A) {
 
   const jobs = [], notes = [];
   if (gndEps.length) {
+    const minus = rails.filter((r) => r.name.endsWith('-'));
+    const forcedMinus = new Set(minus.filter((r) => userRailStrips.has(r.strip)).map((r) => r.strip));
     let grounded = rails.filter((r) => r.ground);
     if (!grounded.length) {
-      const minus = rails.filter((r) => r.name.endsWith('-'));
-      grounded = minus.length ? [closestTo(minus, gndEps)] : [];
+      grounded = pickRails(minus, gndEps, forcedMinus);
+    } else if (forcedMinus.size) {
+      const have = new Set(grounded.map((r) => r.strip));
+      for (const r of minus) if (forcedMinus.has(r.strip) && !have.has(r.strip)) grounded.push(r);
     }
     const eps = [...gndEps, ...grounded.map((r) => railEp([r.strip]))];
     if (eps.length > 1) jobs.push({ eps, tag: 'Power', given: labels(eps) });
@@ -750,7 +889,9 @@ function powerJobs(design, layout, A) {
       byVolts.get(v).push(endpointOf(c.ref, design, layout));
     }
     const used = new Set();
-    for (const v of [...byVolts.keys()].sort((a, b) => a - b)) {
+    const voltsList = [...byVolts.keys()].sort((a, b) => a - b);
+    let remainingUnpowered = voltsList.filter((v) => !rails.some((r) => r.volts === v)).length;
+    for (const v of voltsList) {
       const powered = rails.filter((r) => r.volts === v);
       if (powered.length) {
         const eps = [...byVolts.get(v), railEp(powered.map((r) => r.strip))];
@@ -760,13 +901,28 @@ function powerJobs(design, layout, A) {
       const src = usb.find((u) => u.volts === v), srcEp = endpointOf(src.ref, design, layout);
       const spare = rails.filter((r) => r.name.endsWith('+') && r.volts === null && !r.ground && !used.has(r.strip));
       if (!spare.length) fail(`No spare + rail to carry ${v} V from ${src.ref}. Use a board with more rails, or wire it by hand.`);
-      const rail = closestTo(spare, [srcEp, ...byVolts.get(v)]);
-      used.add(rail.strip);
-      notes.push(`fed ${railLabel(rail.strip)} from ${src.ref}`);
-      const eps = [srcEp, railEp([rail.strip]), ...byVolts.get(v)];
+      const maxRails = Math.max(1, spare.length - (remainingUnpowered - 1));
+      remainingUnpowered--;
+      const forcedPlus = voltsList.length === 1
+        ? new Set(spare.filter((r) => userRailStrips.has(r.strip)).map((r) => r.strip))
+        : new Set();
+      const cons = byVolts.get(v);
+      let chosen = pickRails(spare, cons, forcedPlus, maxRails);
+      if (chosen.length === 1 && !forcedPlus.size) {
+        const srcRail = closestTo(spare, [srcEp]);
+        if (chosen[0].strip !== srcRail.strip && cons.length >= 2 && maxRails >= 2) {
+          chosen = [srcRail, chosen[0]].sort((a, b) => (a.strip < b.strip ? -1 : 1));
+        } else {
+          chosen = [closestTo(spare, [srcEp, ...cons])];
+        }
+      }
+      for (const r of chosen) used.add(r.strip);
+      notes.push(`fed ${chosen.map((r) => railLabel(r.strip)).join(', ')} from ${src.ref}`);
+      const eps = [srcEp, ...chosen.map((r) => railEp([r.strip])), ...cons];
       jobs.push({ eps, tag: 'Power', given: labels(eps) });
     }
   }
+  if (!jobs.length) notes.push('No ground or supply pins to wire.');
   return { jobs, notes };
 }
 
@@ -778,10 +934,12 @@ export function routeNets(design, { nets = [], power = false } = {}) {
   const userJobs = nets.map((refs, i) => ({ eps: resolveGroup(refs, i + 1, design, layout, occupancy(design)), tag: `Net ${i + 1}`, given: refs }));
   const wires = [], satisfied = [], notes = [];
   const jobs = [];
-  if (power) { const pj = powerJobs(design, layout, analyze(design)); jobs.push(...pj.jobs); notes.push(...pj.notes); }
+  if (power) { const pj = powerJobs(design, layout, analyze(design), userJobs); jobs.push(...pj.jobs); notes.push(...pj.notes); }
   jobs.push(...userJobs);
   const at = (h) => parseHole(h, design, layout);
   const centre = (holes) => ({ col: holes.reduce((s, h) => s + at(h).col, 0) / holes.length, y: holes.reduce((s, h) => s + at(h).y, 0) / holes.length });
+  const scoreCtx = buildScoreCtx(design, layout);
+  const avoid = overhangSet(design, layout);
 
   jobs.forEach(({ eps, tag, given }) => {
     let added = 0;
@@ -789,21 +947,24 @@ export function routeNets(design, { nets = [], power = false } = {}) {
     for (;;) {
       const comps = routeComponents(eps, analyze(design));
       if (comps.length === 1) { if (!added) satisfied.push(given); break; }
-      const occ = occupancy(design), avoid = overhangSet(design, layout);
+      const occ = occupancy(design);
       const free = (strip) => stripHoles(strip, design, layout).filter((h) => !occ.has(h) && !avoid.has(h));
-      // Every candidate hole of a component, optionally pruning long strips towards a point. railOnly keeps
-      // the component's rail endpoints only, so a wire lands on the rail rather than on a pin already joined to it.
-      const candidates = (comp, toward, railOnly = false) => {
+      // Every candidate hole of a component, optionally pruning long strips towards a point.
+      // mode: 'all' | 'rail' (rail endpoints only) | 'railOrTied' (rail endpoints or pins internally tied across boards).
+      const candidates = (comp, toward, mode = 'all') => {
         const out = [];
         for (const ep of comp) {
-          if (railOnly && !ep.rail) continue;
+          if (mode === 'rail' && !ep.rail) continue;
+          if (mode === 'railOrTied' && !ep.rail && new Set(ep.strips.map((s) => s.split(':')[0])).size <= 1) continue;
           if (ep.hole && mine.has(ep.hole)) { out.push(...free(ep.strips[0])); continue; } // already wired: any free hole of its strip is the same net
           if (ep.hole) { if (occ.has(ep.hole)) fail(`${tag}: Hole ${ep.hole} is taken: ${describeOcc(occ.get(ep.hole))}.`); out.push(ep.hole); continue; }
           for (const st of ep.strips) {
             let hs = free(st);
             if (toward && hs.length > ROUTE_WEIGHTS.candidates) {
               const d = (h) => Math.hypot(at(h).col - toward.col, at(h).y - toward.y);
-              hs = hs.sort((a, b) => d(a) - d(b) || (a < b ? -1 : 1)).slice(0, ROUTE_WEIGHTS.candidates);
+              const edges = ep.rail ? [...hs.slice(0, 2), ...hs.slice(-2)] : [];
+              const near = [...hs].sort((a, b) => d(a) - d(b) || (a < b ? -1 : 1)).slice(0, ROUTE_WEIGHTS.candidates);
+              hs = [...near, ...edges];
             }
             out.push(...hs);
           }
@@ -813,24 +974,34 @@ export function routeNets(design, { nets = [], power = false } = {}) {
       const all = comps.map((c) => candidates(c, null));
       comps.forEach((c, i) => { if (!all[i].length) fail(`${tag}: No free hole left for ${c[0].label}. Move a part, or use two joined boards.`); });
       // With a rail in the group, wire each piece to the rail (as on a real board) instead of chaining pin to
-      // pin. If no rail hole can be reached, fall back to the cheapest wire between any two pieces.
+      // pin. When joining two rail-bearing components, allow rail-to-rail or internally-tied-pin-to-rail links.
       const hasRail = comps.map((c) => c.some((ep) => ep.rail));
       const search = (railFirst) => {
         let best = null;
-        for (let i = 0; i < comps.length; i++) for (let j = i + 1; j < comps.length; j++) {
-          if (railFirst && !hasRail[i] && !hasRail[j]) continue;
-          const xs = candidates(comps[i], centre(all[j]), railFirst && hasRail[i]), ys = candidates(comps[j], centre(all[i]), railFirst && hasRail[j]);
+        const tryPairs = (xs, ys) => {
           for (const hx of xs) for (const hy of ys) {
             if (hx === hy) continue;
-            const score = scoreWire(design, hx, hy), key = `${hx}|${hy}`;
+            const score = scoreWire(design, hx, hy, scoreCtx), key = `${hx}|${hy}`;
             if (!best || score < best.score || (score === best.score && key < best.key)) best = { score, key, from: hx, to: hy };
+          }
+        };
+        for (let i = 0; i < comps.length; i++) for (let j = i + 1; j < comps.length; j++) {
+          if (railFirst && !hasRail[i] && !hasRail[j]) continue;
+          const ci = centre(all[i]), cj = centre(all[j]);
+          if (railFirst && hasRail[i] && hasRail[j]) {
+            tryPairs(candidates(comps[i], cj, 'rail'), candidates(comps[j], ci, 'railOrTied'));
+            tryPairs(candidates(comps[i], cj, 'railOrTied'), candidates(comps[j], ci, 'rail'));
+          } else {
+            const xs = candidates(comps[i], cj, railFirst && hasRail[i] ? 'rail' : 'all');
+            const ys = candidates(comps[j], ci, railFirst && hasRail[j] ? 'rail' : 'all');
+            tryPairs(xs, ys);
           }
         }
         return best;
       };
       const best = (hasRail.some(Boolean) && search(true)) || search(false);
       if (!best) fail(`${tag}: Couldn't find two free holes to join ${comps.map((c) => c[0].label).join(' and ')}. Move a part, or use two joined boards.`);
-      try { const w = addWire(design, { from: best.from, to: best.to }); wires.push(w); mine.add(w.from).add(w.to); }
+      try { const w = addWire(design, { from: best.from, to: best.to }); wires.push(w); mine.add(w.from).add(w.to); scoreCtx.wireSegs.push([scoreCtx.pt(w.from), scoreCtx.pt(w.to)]); }
       catch (e) { if (e instanceof ModelError) throw new ModelError(`${tag}: ${e.message}`); throw e; }
       added++;
     }
@@ -928,12 +1099,34 @@ export function analyze(design) {
     if (o && o !== L.part.id) add('warning', 'under-psu', `${ref(p)} at ${p.hole} is probably under the power module ${o}. Move it a few columns away.`, [p.hole]);
   }
   const wireEnds = new Map();
-  for (const w of design.wires) for (const h of [w.from, w.to]) {
-    if (holeOwner.has(h)) add('error', 'hole-clash', `Wire ${w.id} ends in ${h}, where ${holeOwner.get(h)} already is.`, [h]);
-    if (wireEnds.has(h)) add('error', 'hole-clash', `Wires ${wireEnds.get(h)} and ${w.id} both end in ${h}.`, [h]);
-    wireEnds.set(h, w.id);
-    if (coveredBy.has(h)) add('warning', 'wire-under-board', `Wire ${w.id} ends in ${h}, under ${coveredBy.get(h)}'s board. Only a flat jumper fitted first would work.`, [h]);
-    if (overhangBy.has(h)) add('warning', 'under-psu', `Wire ${w.id} ends in ${h}, probably under the power module ${overhangBy.get(h)}.`, [h]);
+  const stripPinCount = new Map(), stripWireCount = new Map();
+  for (const L of layout) for (const p of L.pins) { const st = S(p.hole); stripPinCount.set(st, (stripPinCount.get(st) || 0) + 1); }
+  for (const w of design.wires) {
+    if (!H(w.from) || !H(w.to)) continue;
+    for (const h of [w.from, w.to]) { const st = S(h); stripWireCount.set(st, (stripWireCount.get(st) || 0) + 1); }
+  }
+  for (const w of design.wires) {
+    for (const h of [w.from, w.to]) {
+      if (holeOwner.has(h)) add('error', 'hole-clash', `Wire ${w.id} ends in ${h}, where ${holeOwner.get(h)} already is.`, [h]);
+      if (wireEnds.has(h)) add('error', 'hole-clash', `Wires ${wireEnds.get(h)} and ${w.id} both end in ${h}.`, [h]);
+      wireEnds.set(h, w.id);
+      if (coveredBy.has(h)) add('warning', 'wire-under-board', `Wire ${w.id} ends in ${h}, under ${coveredBy.get(h)}'s board. Only a flat jumper fitted first would work.`, [h]);
+      if (overhangBy.has(h)) add('warning', 'under-psu', `Wire ${w.id} ends in ${h}, probably under the power module ${overhangBy.get(h)}.`, [h]);
+    }
+    if (H(w.from) && H(w.to)) {
+      const dangling = [w.from, w.to].filter((h) => { const st = S(h); return !stripPinCount.get(st) && (stripWireCount.get(st) || 0) <= 1; });
+      if (dangling.length) add('warning', 'dangling-wire', `Wire ${w.id} (${w.from} → ${w.to}) has an unconnected end at ${dangling.join(' and ')} (nothing else in that strip). Move or remove it.`, dangling);
+    }
+  }
+  // Check for physically overlapping component bodies (excluding rail modules, which use overhang checks).
+  const bodies = layout.filter((L) => L.body && L.lib.kind !== 'rail-module');
+  for (let i = 0; i < bodies.length; i++) {
+    for (let j = i + 1; j < bodies.length; j++) {
+      const a = bodies[i].body, b = bodies[j].body;
+      if (a.c0 < b.c1 && a.c1 > b.c0 && a.y0 < b.y1 && a.y1 > b.y0) {
+        add('warning', 'body-overlap', `${bodies[i].part.id} and ${bodies[j].part.id} physically overlap on the board. Move one so their bodies clear each other.`, [...bodies[i].pins.map((p) => p.hole), ...bodies[j].pins.map((p) => p.hole)]);
+      }
+    }
   }
   for (const L of layout) {
     const byStrip = new Map();
@@ -1056,13 +1249,33 @@ export function analyze(design) {
     }
   }
 
-  // LEDs and buttons
+  // LEDs, resistors and buttons
+  const seriesResistor = (ledPin) => {
+    const others = ledPin.net.pins.filter((p) => p !== ledPin);
+    if (others.length !== 1 || others[0].role !== 'passive') return null;
+    const R = layout.find((x) => x.part.id === others[0].part && x.part.type === 'resistor');
+    if (!R) return null;
+    const far = R.pins.find((p) => p !== others[0]);
+    return { R, farNet: far.net };
+  };
   for (const L of layout.filter((x) => x.part.type === 'led')) {
     const A = L.pins.find((p) => p.role === 'led-a'), K = L.pins.find((p) => p.role === 'led-k');
+    const aRes = seriesResistor(A), kRes = seriesResistor(K);
+    const aEff = aRes ? aRes.farNet : A.net, kEff = kRes ? kRes.farNet : K.net;
+    for (const gp of [...aEff.pins, ...kEff.pins].filter((p) => p.role === 'gpio')) noteGpio(gp, `LED ${L.part.id}`);
     if (A.net === K.net) add('error', 'led-shorted', `${L.part.id}'s legs are on the same net, so it can never light.`, [A.hole, K.hole]);
-    else if (K.net.driven && !K.net.ground && A.net.ground) add('error', 'led-backwards', `${L.part.id} is in backwards: its anode (long leg) is on ground. Swap at and to.`, [A.hole, K.hole]);
+    else if (kEff.driven && !kEff.ground && aEff.ground) add('error', 'led-backwards', `${L.part.id} is in backwards: its anode (long leg) is on ground. Swap at and to.`, [A.hole, K.hole]);
     else if (A.net.driven && K.net.ground) add('warning', 'led-no-resistor', `${L.part.id} goes straight from ${A.net.name} to ground with no series resistor, which will burn it out or overload the pin. Add a resistor (220–1k Ω).`, [A.hole, K.hole]);
     else if (!A.net.driven && A.net.pins.length + A.net.wires.length <= 1 || !K.net.driven && K.net.pins.length + K.net.wires.length <= 1) add('info', 'led-open', `${L.part.id} isn't in a complete circuit yet.`, [A.hole, K.hole]);
+    for (const sr of [aRes, kRes].filter(Boolean)) {
+      const ohms = sr.R.part.props.ohms;
+      if (ohms < 68) add('warning', 'led-resistor-low', `${L.part.id}'s series resistor ${sr.R.part.id} is only ${ohms} Ω, which may draw excessive current. Use 220–1000 Ω.`, [A.hole, K.hole, ...sr.R.pins.map((p) => p.hole)]);
+      else if (ohms > 10000) add('warning', 'led-resistor-high', `${L.part.id}'s series resistor ${sr.R.part.id} is ${ohms} Ω, which will make the LED very dim. 220–1000 Ω is typical.`, [A.hole, K.hole, ...sr.R.pins.map((p) => p.hole)]);
+    }
+  }
+  for (const L of layout.filter((x) => x.part.type === 'resistor')) {
+    const open = L.pins.filter((p) => p.net.pins.length === 1 && p.net.wires.length === 0);
+    if (open.length) add('warning', 'resistor-open', `${L.part.id} (${L.part.props.ohms} Ω) has an unconnected lead at ${open.map((p) => p.hole).join(' and ')}.`, open.map((p) => p.hole));
   }
   for (const L of layout.filter((x) => x.lib.kind === 'tactile')) {
     const n1 = L.pins.find((p) => p.label === '1').net, n2 = L.pins.find((p) => p.label === '2').net;
@@ -1071,6 +1284,27 @@ export function analyze(design) {
     if ((n1.ground && n2.sources.length) || (n2.ground && n1.sources.length)) add('error', 'button-short', `${L.part.id} connects a supply straight to ground when pressed.`, L.pins.map((p) => p.hole));
     else if (gp && other?.ground) { add('info', 'button', `${L.part.id} pulls ${gp.part} GPIO${gp.gpio} to ground when pressed: use pinMode(${gp.gpio}, INPUT_PULLUP) and read LOW as pressed.`, L.pins.map((p) => p.hole)); noteGpio(gp, 'button'); }
     else if (gp && other?.sources.length) { add('info', 'button', `${L.part.id} pulls ${gp.part} GPIO${gp.gpio} high when pressed: use INPUT_PULLDOWN or add a pull-down resistor.`, L.pins.map((p) => p.hole)); noteGpio(gp, 'button'); }
+    const openSides = [['side 1', n1], ['side 2', n2]].filter(([, n]) => n.pins.every((p) => p.part === L.part.id) && n.wires.length === 0);
+    if (openSides.length) add('warning', 'button-open', `${L.part.id} has an unconnected side (${openSides.map(([name]) => name).join(' and ')}).`, L.pins.map((p) => p.hole));
+  }
+
+  // Catch risky/reserved GPIOs even when wired to passives or general circuits (not just I²C/UART/direct buttons).
+  for (const L of mcus) for (const p of L.pins) {
+    if (p.role === 'gpio' && (p.net.pins.length > 1 || p.net.wires.length > 0)) noteGpio(p, 'wired net');
+  }
+
+  // Power wire color-coding advisory (GND=black, 5V=red, 3.3V=orange/red).
+  const colorMismatches = [];
+  for (const w of design.wires) {
+    if (!H(w.from) || !H(w.to)) continue;
+    const n = netByStrip.get(S(w.from));
+    if (!n) continue;
+    if (n.ground && w.color !== 'black') colorMismatches.push({ w, expected: 'black', net: n.name });
+    else if (!n.ground && n.volts === 5 && w.color !== 'red') colorMismatches.push({ w, expected: 'red', net: n.name });
+    else if (!n.ground && n.volts === 3.3 && w.color !== 'orange' && w.color !== 'red') colorMismatches.push({ w, expected: 'orange', net: n.name });
+  }
+  if (colorMismatches.length) {
+    add('info', 'wire-color', `Power wire color-coding: ${colorMismatches.map((m) => `${m.w.id} on ${m.net} is ${m.w.color} (use ${m.expected})`).join('; ')}. Use set_wire_color to standardize.`, colorMismatches.flatMap((m) => [m.w.from, m.w.to]));
   }
 
   const notes = new Set();
@@ -1091,6 +1325,33 @@ export function summarizeChecks(a) {
 export function describeBoards(design) {
   return boardLayout(design).map((B) => `Board ${B.index}: ${SIZES[B.size].label}, rails ${B.rails.length ? B.rails.join(' ') : 'none'}${B.splitRails ? ' (split)' : ''}${B.index > 1 ? `, holes written ${B.index}:a12` : ''}`);
 }
+export function describeBody(L, design, layout = boardLayout(design)) {
+  if (!L?.body) return null;
+  if (L.lib.kind === 'single-header') {
+    const at = parseHole(L.part.at, design, layout);
+    const cols = L.pins.map((p) => parseHole(p.hole, design, layout).col);
+    const cMin = Math.min(...cols), cMax = Math.max(...cols);
+    const up = at.ly <= 4;
+    const B = layout[at.board - 1];
+    const rows = Object.entries(ROW_Y)
+      .filter(([, ly]) => { const y = B.oy + ly; return y >= L.body.y0 && y <= L.body.y1; })
+      .map(([r]) => prefix(at.board) + r);
+    const clearRows = Object.entries(ROW_Y)
+      .filter(([r, ly]) => (up ? ly <= 4 : ly >= 7) && r !== at.row && (B.oy + ly < L.body.y0 || B.oy + ly > L.body.y1))
+      .map(([r]) => prefix(at.board) + r);
+    const overStr = rows.length > 1 ? `over rows ${rows[0]}–${rows[rows.length - 1]}` : rows.length === 1 ? `over row ${rows[0]}` : `past ${prefix(at.board)}${up ? 'a' : 'j'}`;
+    const clearStr = clearRows.length ? `; rows ${clearRows.join(', ')} stay clear in its pin strips` : '; no clear rows remain on that half';
+    return `PCB body extends ${up ? 'upward' : 'downward'} ${overStr} (cols ${cMin}–${cMax})${clearStr}`;
+  }
+  if (L.lib.kind === 'tactile') {
+    const at = parseHole(L.part.at, design, layout);
+    return `Body spans ${prefix(at.board)}e–${prefix(at.board)}f, cols ${at.col}–${at.col + 2} (straddles center gap)`;
+  }
+  if (L.lib.kind === 'rail-module') {
+    return L.overhang.length ? `Overhangs ${L.overhang.length} holes near the power module` : null;
+  }
+  return null;
+}
 export function describeDesign(design) {
   const a = analyze(design);
   return {
@@ -1105,9 +1366,12 @@ export function describeDesign(design) {
     status: summarizeChecks(a),
   };
 }
-export function describeNets(design) {
+export function describeNets(design, { connectedOnly = false } = {}) {
   const a = analyze(design);
-  return a.nets.map((n) => ({
+  const list = connectedOnly
+    ? a.nets.filter((n) => n.wires.length > 0 || new Set(n.pins.map((p) => p.part)).size > 1)
+    : a.nets;
+  return list.map((n) => ({
     name: n.name, ...(n.volts !== null ? { volts: n.volts } : {}),
     pins: n.pins.map((p) => `${p.part}.${p.name} (${p.hole})`),
     strips: [...n.strips].map((s) => describeStrip(s, design)), wires: n.wires,
@@ -1126,6 +1390,9 @@ export function boardInfo(design) {
 export function listParts() {
   return Object.entries(LIBRARY).map(([type, l]) => ({
     type, name: l.name, kind: l.kind, description: l.description,
+    ...(l.kind === 'single-header' ? {
+      placement: 'Upright single-header breakout: pins run horizontally from `at` (rightward at rotation 0, leftward at 180). Its PCB body extends ~2 rows upward when placed in rows a–e (anchor in row e to keep rows a–b clear above), or ~2 rows downward when placed in rows f–j (anchor in row f to keep rows i–j clear below).',
+    } : {}),
     pins: l.kind === 'dual-header' ? Object.fromEntries(headerNames(l).map((h) => [h, l.headers[h].join(' ')]))
       : l.kind === 'rail-module' ? RAILS.join(' ')
         : l.kind === 'two-lead' ? l.leads.map((x) => `${x.key} (${x.name})`).join(', ')

@@ -198,3 +198,38 @@ test('a 3.3 V net is orange even when a part on it would take 5 V', () => {
   assert.ok(supply.length >= 3);
   for (const w of supply) assert.equal(w.color, 'orange', `${w.id} ${w.from} -> ${w.to}`);
 });
+
+test('power mode energizes both rail pairs on 2 joined boards when parts span both boards', () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-s3-devkitc-1', at: 'e4' });
+  M.placePart(d, { type: 'bme280-3v3', at: 'e30' });
+  M.placePart(d, { type: 'ssd1306-oled', at: 'e41' });
+  M.placePart(d, { type: 'gps-neo6m', at: '2:f29' });
+  const r = M.routeNets(d, {
+    nets: [['U2.SDA', 'U3.SDA', 'U1.GPIO8'], ['U2.SCL', 'U3.SCL', 'U1.GPIO9'], ['U4.TX', 'U1.GPIO18'], ['U4.RX', 'U1.GPIO17']],
+    power: true,
+  });
+  assert.deepEqual(errors(d), []);
+  const gndRails = new Set(d.wires.filter((w) => w.color === 'black').flatMap((w) => [w.from, w.to]).filter(isRail).map((h) => h.replace(/\d+$/, '')));
+  const pwrRails = new Set(d.wires.filter((w) => w.color === 'orange').flatMap((w) => [w.from, w.to]).filter(isRail).map((h) => h.replace(/\d+$/, '')));
+  assert.deepEqual([...gndRails].sort(), ['2:B-', 'T-']);
+  assert.deepEqual([...pwrRails].sort(), ['2:B+', 'T+']);
+  assert.ok(r.notes.some((n) => /T\+.*2:B\+/.test(n) || /2:B\+.*T\+/.test(n)), r.notes.join('; '));
+  const powerWires = d.wires.filter((w) => w.color === 'black' || w.color === 'orange');
+  const powerOnly = { ...d, wires: powerWires };
+  const m = M.layoutMetrics(powerOnly);
+  assert.deepEqual(m.wiresOverParts, []);
+  assert.equal(m.wireCrossings, 0);
+  assert.equal(m.straightWires, powerWires.length);
+});
+
+test('power mode grounds a second rail explicitly referenced in nets', () => {
+  const d = M.newDesign({ boards: 2 });
+  M.placePart(d, { type: 'esp32-s3-devkitc-1', at: 'e4' });
+  M.placePart(d, { type: 'bme280-3v3', at: 'e30' });
+  M.placePart(d, { type: 'button', at: '2:e39' });
+  M.routeNets(d, { nets: [['U2.SDA', 'U1.GPIO8'], ['U2.SCL', 'U1.GPIO9'], ['SW1.1', 'U1.GPIO4'], ['SW1.2', '2:B-']], power: true });
+  assert.deepEqual(errors(d), []);
+  assert.ok(joined(d, 'SW1.side 2', 'U1.GND'));
+});
+

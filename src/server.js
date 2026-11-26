@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as M from './model.js';
 import * as store from './designs.js';
+import * as R from './render.js';
 
 const DESIGNS_DIR = process.env.BREADBOARD_DESIGNS_DIR || path.join(os.homedir(), '.breadboard-bench', 'designs');
 // One design file per Claude Code session (see designPathFor); BREADBOARD_DESIGN overrides it.
@@ -169,6 +170,24 @@ const server = http.createServer((req, res) => {
     return res.end(html);
   }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, view());
+  if (req.method === 'GET' && (url.pathname === '/api/preview.svg' || url.pathname === '/api/preview.png')) {
+    const q = url.searchParams;
+    const opts = {
+      boardColor: q.get('board') || 'cream',
+      tidy: q.get('tidy') === '1' || q.get('tidy') === 'true',
+      showChecks: q.get('checks') !== '0' && q.get('checks') !== 'false',
+      showLabels: q.get('labels') !== '0' && q.get('labels') !== 'false',
+      showWireIds: q.get('wire_ids') === '1' || q.get('wire_ids') === 'true',
+      header: q.get('header') !== '0' && q.get('header') !== 'false',
+      scale: q.get('scale') ? Number(q.get('scale')) : 1.5,
+    };
+    if (url.pathname.endsWith('.svg')) {
+      res.writeHead(200, { 'content-type': 'image/svg+xml; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(R.renderSvg(design, opts).svg);
+    }
+    res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
+    return res.end(R.renderPng(design, opts).buffer);
+  }
   if (req.method === 'GET' && url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write(`data: ${JSON.stringify(view())}\n\n`);
@@ -202,17 +221,30 @@ server.once('listening', () => { viewUrl = `http://${HOST === '0.0.0.0' ? os.hos
 listen(PORT, 10);
 
 // ---------- MCP tools ----------
-const mcp = new McpServer({ name: 'breadboard-bench', version: '0.2.0' });
+const mcp = new McpServer(
+  { name: 'breadboard-bench', version: '0.3.0' },
+  {
+    instructions:
+      'Breadboard Bench lets you design, wire, verify, and visually inspect realistic breadboard circuits. ' +
+      'Recommended workflow: (1) Call board_info and list_parts first and only use parts available in the library. ' +
+      '(2) Start with new_design (use boards: 2 joined when an ESP32 DevKitC needs both headers reachable). ' +
+      '(3) Place parts with clear spatial zones, wire power and grounds using standard color coding (5V=red, 3.3V=orange, GND=black), then wire signals. ' +
+      '(4) Verify with check_design and get_nets (pass connected_only: true on large boards) — fix all errors and inspect warnings. ' +
+      '(5) Visually inspect the layout with render_preview (PNG), critique component spacing, crossings, and readability, run a polish pass (move_part, set_wire_color, remove_wire/remove_wires, add_wires/route_nets), and re-verify before save_design.',
+  },
+);
 const text = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
 const pendingEdits = () => userEdits.length - userEditsSeen;
 const tool = (name, title, description, inputSchema, fn) =>
   mcp.registerTool(name, { title, description, inputSchema }, async (args) => {
     try {
       let out = await fn(args || {});
-      if (name !== 'get_user_edits' && pendingEdits() > 0) {
-        const note = `${pendingEdits()} edit(s) made by the user in the viewer since you last looked; call get_user_edits.`;
-        out = typeof out === 'string' ? `${out}\n\n${note}` : { ...out, user_edits: note };
+      const hasEdits = name !== 'get_user_edits' && pendingEdits() > 0;
+      const note = hasEdits ? `${pendingEdits()} edit(s) made by the user in the viewer since you last looked; call get_user_edits.` : null;
+      if (out && typeof out === 'object' && Array.isArray(out.content)) {
+        return note ? { ...out, content: [...out.content, { type: 'text', text: note }] } : out;
       }
+      if (note) out = typeof out === 'string' ? `${out}\n\n${note}` : { ...out, user_edits: note };
       return text(out);
     } catch (e) { return { isError: true, ...text(e instanceof M.ModelError ? e.message : `Error: ${e.message}`) }; }
   });
@@ -247,12 +279,18 @@ tool('place_part', 'Place a part',
   (a) => {
     const part = mutate((d) => M.placePart(d, a), { label: `place ${a.type}` });
     const L = M.analyze(design).layout.find((x) => x.part.id === part.id);
-    return { placed: part.id, pins: L.pins.map((p) => `${p.key} ${p.name} @ ${p.hole}`), ...(L.covered.length ? { covers: `${L.covered.length} holes under the board` } : {}), status: status() };
+    const body = M.describeBody(L, design);
+    return { placed: part.id, pins: L.pins.map((p) => `${p.key} ${p.name} @ ${p.hole}`), ...(L.covered.length ? { covers: `${L.covered.length} holes under the board` } : {}), ...(body ? { body } : {}), status: status() };
   });
-tool('move_part', 'Move a part', 'Move or rotate a placed part. Wires stay in their holes, so check connections afterwards.',
+tool('move_part', 'Move a part', 'Move or rotate a placed part. Returns the new pin holes and body clearance. Existing wires stay in their old holes, so check connections afterwards.',
   { id: z.string(), at: z.string().optional(), rotation: rotation.optional(), to: z.string().optional() },
-  (a) => { const p = mutate((d) => M.movePart(d, a), { label: `move ${a.id}` }); return `Moved ${p.id} to ${p.at}${p.rotation ? ' (rotated 180)' : ''}. ${status()}.`; });
-tool('set_part_props', 'Change part settings', 'Change props such as the ESP32 power mode or the power module jumpers.',
+  (a) => {
+    const p = mutate((d) => M.movePart(d, a), { label: `move ${a.id}` });
+    const L = M.analyze(design).layout.find((x) => x.part.id === p.id);
+    const body = M.describeBody(L, design);
+    return { moved: p.id, at: p.at, ...(p.to ? { to: p.to } : {}), rotation: p.rotation, pins: L.pins.map((x) => `${x.key} ${x.name} @ ${x.hole}`), ...(body ? { body } : {}), status: status() };
+  });
+tool('set_part_props', 'Change part settings', 'Change props such as the ESP32 power mode, resistor ohms, LED color, breakout pin order, or power module jumpers.',
   { id: z.string(), props: z.record(z.string(), z.any()) },
   (a) => { const p = mutate((d) => M.setPartProps(d, a), { label: `set ${a.id} props` }); return `${p.id} props: ${JSON.stringify(p.props)}. ${status()}.`; });
 tool('remove_part', 'Remove a part', 'Remove a part. Wires stay where they are.',
@@ -270,10 +308,19 @@ tool('add_wires', 'Add jumper wires',
 tool('move_wire_end', 'Move a wire end', 'Move one end of a wire to another hole.',
   { id: z.string(), end: z.enum(['from', 'to']), to: z.string() },
   (a) => { const w = mutate((d) => M.moveWireEnd(d, a), { label: `move ${a.id}` }); return `${w.id} now ${w.from} → ${w.to}. ${status()}.`; });
+tool('set_wire_color', 'Change wire color', 'Change the insulation color of an existing wire without removing it (e.g. standardize GND=black, 5V=red, 3.3V=orange, SDA=blue, SCL=yellow).',
+  { id: z.string(), color: z.enum(M.WIRE_COLORS) },
+  (a) => { const w = mutate((d) => M.setWireColor(d, a), { label: `recolor ${a.id} to ${a.color}` }); return `${w.id} is now ${w.color} (${w.from} → ${w.to}). ${status()}.`; });
 tool('remove_wire', 'Remove a wire', 'Remove a wire by id (W3).',
   { id: z.string() }, (a) => { mutate((d) => M.removeWire(d, a), { label: `remove ${a.id}` }); return `Removed ${a.id}. ${status()}.`; });
+tool('remove_wires', 'Remove multiple wires', 'Remove multiple wires by id in a single atomic, undoable step (all-or-nothing), e.g. { ids: ["W3", "W7", "W9"] }.',
+  { ids: z.array(z.string()).min(1) },
+  ({ ids }) => {
+    const removed = mutate((d) => M.removeWires(d, ids), { label: `remove ${ids.length} wire${ids.length === 1 ? '' : 's'}` });
+    return `Removed ${removed.join(', ')}. ${status()}.`;
+  });
 tool('route_nets', 'Route nets',
-  'Let the tool choose the wires. `nets` is a list of groups of endpoints that must end up as one net, e.g. [["U1.GPIO8","U2.SDA"],["U2.VCC","U2.CSB","B+"]]. Endpoints are a hole (used exactly), a rail (T+, 2:B-) or a part pin (U1.GPIO8); a rail or pin lets the tool pick a free hole. It adds the fewest wires, skips pins that are already connected, and prefers short, straight wires that avoid crossing parts and other wires. In a group with a rail, each pin is wired to the rail rather than chained to another pin. `power: true` also wires every ground pin and supply pin to a rail of a fitting voltage, choosing the rail nearest the parts it serves (it feeds a rail from a USB-powered ESP32 if no rail is powered). One undo reverts the whole route; use add_wires when you want to choose each hole yourself.',
+  'Let the tool choose the wires. `nets` is a list of groups of endpoints that must end up as one net, e.g. [["U1.GPIO8","U2.SDA"],["U2.VCC","U2.CSB","B+"]]. Endpoints are a hole (used exactly), a rail (T+, 2:B-) or a part pin (U1.GPIO8); a rail or pin lets the tool pick a free hole. It adds the fewest wires, skips pins that are already connected, and prefers short, straight wires that avoid crossing parts and other wires. In a group with a rail, each pin is wired to the rail rather than chained to another pin. `power: true` also wires every ground pin and supply pin to the nearest fitting rail (energizing and bridging multiple rail pairs on 2-board layouts when parts span both boards or when rails are referenced in `nets`, feeding from a USB-powered ESP32 if no rail is powered). One undo reverts the whole route; use add_wires when you want to choose each hole yourself.',
   { nets: z.array(z.array(z.string())).optional(), power: z.boolean().optional() },
   ({ nets = [], power = false }) => {
     const r = mutate((d) => M.routeNets(d, { nets, power }), { label: `route ${nets.length} net${nets.length === 1 ? '' : 's'}${power ? ' + power' : ''}` });
@@ -299,10 +346,71 @@ tool('get_user_edits', 'Edits made in the viewer',
   });
 tool('get_design', 'Read the design', 'Boards, parts with every pin\'s hole and net, wires, and a check summary.',
   {}, () => ({ ...M.describeDesign(design), viewer: viewUrl }));
-tool('get_nets', 'List nets', 'Every net: which pins, strips and wires it joins, and its voltage if it is a supply.', {}, () => M.describeNets(design));
+tool('get_nets', 'List nets',
+  'Every net: which pins, strips and wires it joins, and its voltage if it is a supply. Pass connected_only: true to hide single-part unconnected pins (useful on large dev boards).',
+  { connected_only: z.boolean().optional().describe('If true, omit nets with no wires that only touch a single part (default: false)') },
+  (a) => M.describeNets(design, { connectedOnly: !!a.connected_only }));
 tool('check_design', 'Check the design',
-  'Physical fit, shorts, supply voltages, common ground, I²C wiring and addresses, LED resistors, buttons and risky GPIOs. Fix every error before calling a layout done.',
-  {}, () => { const a = M.analyze(design); return { summary: M.summarizeChecks(a), checks: a.checks.map((c) => `${c.level.toUpperCase()} [${c.code}] ${c.message}`), i2c: a.firmware.map(({ mcu, sda, scl, devices }) => ({ mcu, sda, scl, devices: devices.map(({ part, kind, address }) => ({ part, kind, address })) })) }; });
+  'Physical fit, overlapping bodies, dangling wires, shorts, supply voltages, common ground, I²C wiring and addresses, UART wiring, LED resistors, floating passives/buttons, risky GPIOs, power wire color-coding, and layout neatness metrics. Fix every error before calling a layout done.',
+  {}, () => {
+    const a = M.analyze(design);
+    const fmtCheck = (c) => `${c.level.toUpperCase()} [${c.code}] ${c.message}${c.holes?.length ? ` (holes: ${c.holes.join(', ')})` : ''}`;
+    return {
+      summary: M.summarizeChecks(a),
+      checks: a.checks.map(fmtCheck),
+      layout: M.layoutMetrics(design, a),
+      i2c: a.firmware.map(({ mcu, sda, scl, devices }) => ({ mcu, sda, scl, devices: devices.map(({ part, kind, address }) => ({ part, kind, address })) })),
+    };
+  });
+tool('render_preview', 'Render visual preview',
+  'Render the current breadboard layout headlessly as a PNG image (returned natively as an MCP image for visual inspection) or SVG. Use this to inspect component spacing, wire crossings, readability, and highlighted checks, and optionally save the preview to disk via output_path.',
+  {
+    format: z.enum(['png', 'svg']).optional().describe('Output format: png (default, native MCP image) or svg'),
+    board_color: z.enum(R.BOARD_COLORS).optional().describe('Breadboard palette: cream (default), white, green, blue, red, black'),
+    tidy: z.boolean().optional().describe('Draw wires with 90-degree orthogonal bends and lane separation instead of curves (default: false)'),
+    show_checks: z.boolean().optional().describe('Highlight error/warning holes on the board and show a check footer (default: true)'),
+    show_labels: z.boolean().optional().describe('Show part IDs and resistor ohm labels on two-lead components (default: true)'),
+    show_wire_ids: z.boolean().optional().describe('Badge wire midpoints with wire IDs (W1, W2, ...) for targeted cleanup (default: false)'),
+    header: z.boolean().optional().describe('Include header bar with title, counts, and check status (default: true)'),
+    scale: z.number().min(0.5).max(3).optional().describe('PNG scale factor 0.5–3 (default: 1.5)'),
+    output_path: z.string().optional().describe('Optional file path to save the rendered PNG or SVG to disk'),
+  },
+  (a) => {
+    const opts = {
+      boardColor: a.board_color || 'cream',
+      tidy: !!a.tidy,
+      showChecks: a.show_checks !== false,
+      showLabels: a.show_labels !== false,
+      showWireIds: !!a.show_wire_ids,
+      header: a.header !== false,
+      scale: a.scale ?? 1.5,
+    };
+    const saveFile = (buf) => {
+      if (!a.output_path) return null;
+      const target = path.resolve(a.output_path);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, buf);
+      return target;
+    };
+    if (a.format === 'svg') {
+      const out = R.renderSvg(design, opts);
+      const saved = saveFile(out.svg);
+      return {
+        content: [
+          { type: 'text', text: JSON.stringify({ format: 'svg', width: out.width, height: out.height, ...(saved ? { saved_to: saved } : {}), status: out.summary, layout: out.metrics }, null, 2) },
+          { type: 'text', text: out.svg },
+        ],
+      };
+    }
+    const out = R.renderPng(design, opts);
+    const saved = saveFile(out.buffer);
+    return {
+      content: [
+        { type: 'image', mimeType: 'image/png', data: out.buffer.toString('base64') },
+        { type: 'text', text: JSON.stringify({ format: 'png', width: out.width, height: out.height, ...(saved ? { saved_to: saved } : {}), status: out.summary, layout: out.metrics }, null, 2) },
+      ],
+    };
+  });
 tool('get_viewer_url', 'Viewer link', 'The URL where the user can watch and edit the board.', {}, () => viewerLine());
 tool('load_design', 'Load a design', 'Replace the design with a design object (the saved file format). Undo restores the previous one.',
   { design: z.record(z.string(), z.any()) },
@@ -318,6 +426,111 @@ tool('open_design', 'Open a saved design',
   'Replace the current design with a saved one. Undo restores the previous one, but save the current design first if you want to keep it after a restart.',
   { name: z.string() },
   ({ name }) => { const next = store.openDesign(DESIGNS_DIR, name); mutate((draft) => { Object.keys(draft).forEach((k) => delete draft[k]); Object.assign(draft, next); }, { label: `open ${name}` }); return `Opened "${design.name}". ${status()}.`; });
+
+// ---------- MCP prompts ----------
+mcp.registerPrompt(
+  'design-circuit',
+  {
+    title: 'Design a breadboard circuit end-to-end',
+    description: 'Guided workflow to plan, place, wire, verify, visually inspect, polish, and save a breadboard circuit.',
+    argsSchema: {
+      goal: z.string().describe('The circuit to design (e.g. "ESP32-S3 with BME280, OLED, button, and status LEDs")'),
+      board_setup: z.string().optional().describe('Optional board preference (e.g. "two joined full boards", "single full board with MB102")'),
+    },
+  },
+  ({ goal, board_setup }) => ({
+    description: `End-to-end breadboard circuit design workflow for: ${goal}`,
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text: [
+          `Design and build the following breadboard circuit using the breadboard-bench MCP tools:`,
+          `Goal: ${goal}`,
+          ...(board_setup ? [`Board preference: ${board_setup}`] : []),
+          ``,
+          `Follow this workflow step by step:`,
+          `1. **Discover capabilities**: Call \`board_info\` and \`list_parts\`. Only use part types that genuinely exist in \`list_parts\`, and respect every placement rule, voltage limit, and pinout.`,
+          `2. **Choose board geometry**: Call \`new_design\` with a descriptive name. Use \`boards: 2, joined: true\` if an ESP32 DevKitC needs pins on both headers reachable (anchor J1/J2 in row d or e of board 1, rotation 0). Use a single board if using an \`mb102-power\` rail module.`,
+          `3. **Plan spatial zones before placing**: Give parts breathing room so wires do not have to cross over dev boards or sensor PCBs. Put upright single-header breakouts so their PCB body clears neighboring parts and routing channels. Choose clean GPIOs (avoid flash/PSRAM, strapping, native USB, UART0, and onboard RGB LED pins).`,
+          `4. **Place parts & wire power first**: Place all parts with \`place_part\`, then establish clean power & ground rails (using \`route_nets({ power: true })\` or explicit \`add_wires\`). Follow standard color coding: GND = black, 5V = red, 3.3V = orange, I²C SDA = blue, SCL = yellow, UART TX = white, RX = purple.`,
+          `5. **Wire signals**: Connect I²C, UART, LEDs (always with 220–1000 Ω series resistors), and buttons cleanly using \`route_nets\` or \`add_wires\`.`,
+          `6. **Electrical verification**: Call \`check_design\` and \`get_nets({ connected_only: true })\`. Fix every ERROR and address WARNINGs (floating leads, dangling wires, risky GPIOs, overlapping bodies, missing resistors).`,
+          `7. **Visual inspection & polish (v1 → v2)**: Call \`render_preview\` (with \`show_wire_ids: true\` if helpful) to inspect the layout visually. Critique component spacing, wire crossings, wires crossing over parts, and color coding. Execute a polish pass to improve neatness, then re-run \`check_design\` and \`render_preview\`.`,
+          `8. **Save & summarize**: Call \`save_design\` and \`get_viewer_url\`, then report the circuit architecture, pin/firmware mapping (e.g. Wire.begin / Serial1.begin / GPIO assignments), and verification results.`,
+        ].join('\n'),
+      },
+    }],
+  }),
+);
+
+mcp.registerPrompt(
+  'layout-polish-pass',
+  {
+    title: 'Visual & routing polish pass',
+    description: 'Critique and refine an existing breadboard layout for wiring neatness, spacing, color coding, and visual clarity.',
+    argsSchema: {
+      focus: z.string().optional().describe('Optional area to focus cleanup on (e.g. "reduce crossings", "power rail colors", "component grouping")'),
+    },
+  },
+  ({ focus }) => ({
+    description: 'Visual and routing polish pass for the current breadboard design.',
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text: [
+          `Run a thorough layout and wiring polish pass on the current breadboard design.`,
+          ...(focus ? [`Focus area: ${focus}`] : []),
+          ``,
+          `Steps:`,
+          `1. **Baseline audit**: Call \`get_design\`, \`check_design\`, and \`render_preview({ show_wire_ids: true })\` to inspect both layout metrics (\`wireCrossings\`, \`wiresOverParts\`, \`totalWireLength\`, \`powerColorMismatches\`) and the actual rendered board.`,
+          `2. **Visual critique**: Identify concrete improvements:`,
+          `   - Wires crossing over dev boards, sensor bodies, or other wires.`,
+          `   - Long diagonal runs that can be shortened by moving a part closer to its target GPIOs or switching to a nearer rail.`,
+          `   - Crowded components or colliding labels/bodies.`,
+          `   - Non-standard wire colors on power/ground/bus nets (GND=black, 5V=red, 3.3V=orange, SDA=blue, SCL=yellow).`,
+          `3. **Apply cleanups**: Use \`move_part\`, \`remove_wire\` / \`remove_wires\`, \`add_wires\`, \`move_wire_end\`, \`set_wire_color\`, and \`route_nets\` to simplify routing. Remember \`move_part\` leaves existing wires in their old holes — clean up or re-route those wires immediately.`,
+          `4. **Verify**: Re-run \`check_design\` (confirm 0 errors, no dangling wires, improved layout metrics) and \`render_preview\` (both curved and optionally \`tidy: true\`) to visually confirm the improvement.`,
+        ].join('\n'),
+      },
+    }],
+  }),
+);
+
+mcp.registerPrompt(
+  'debug-circuit',
+  {
+    title: 'Debug breadboard circuit issues',
+    description: 'Diagnose and fix electrical, physical, or firmware-mapping issues in the current breadboard design.',
+    argsSchema: {
+      symptom: z.string().optional().describe('Optional symptom, failing check, or unexpected behavior to investigate'),
+    },
+  },
+  ({ symptom }) => ({
+    description: 'Systematic debugging workflow for the current breadboard design.',
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text: [
+          `Diagnose and fix problems in the current breadboard design.`,
+          ...(symptom ? [`Reported symptom: ${symptom}`] : []),
+          ``,
+          `Steps:`,
+          `1. Call \`check_design\`, \`get_nets({ connected_only: true })\`, and \`render_preview({ show_checks: true, show_wire_ids: true })\` to inspect all flagged holes and net connectivity.`,
+          `2. Triage issues in priority order:`,
+          `   - **Physical fit**: \`hole-clash\`, \`under-board\`, \`strip-short\`, \`body-overlap\`, \`under-psu\`.`,
+          `   - **Power & ground**: \`short\`, \`supply-clash\`, \`overvoltage\`, \`undervoltage\`, \`unpowered\`, \`no-ground\`, \`split-ground\`, \`mcu-backfeed\`.`,
+          `   - **Bus & GPIO integrity**: \`i2c-unconnected\`, \`i2c-short\`, \`csb-low\`, \`uart-crossed\`, \`uart-unconnected\`, \`gpio-error\`, \`gpio-warning\`.`,
+          `   - **Passives & wiring hygiene**: \`led-backwards\`, \`led-no-resistor\`, \`led-resistor-low\`, \`resistor-open\`, \`button-open\`, \`dangling-wire\`.`,
+          `3. Apply targeted fixes (prefer minimal edits; use \`undo\` if an edit makes things worse).`,
+          `4. Re-run \`check_design\`, \`get_nets\`, and \`render_preview\` to confirm all issues are resolved.`,
+        ].join('\n'),
+      },
+    }],
+  }),
+);
 
 await mcp.connect(new StdioServerTransport());
 log('MCP server ready; design file', DESIGN_PATH);

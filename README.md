@@ -76,15 +76,24 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
 | `board_info` | Hole naming, rails, how strips connect, layout tips for wide dev boards |
 | `list_parts` | Part library, with pins, placement rules and props |
 | `new_design` | Fresh board(s): size, 1 or 2 boards, joined or separate, split rails |
-| `place_part`, `move_part`, `set_part_props`, `remove_part` | Parts |
-| `add_wires`, `move_wire_end`, `remove_wire` | Wires. Each end can be a hole (`a12`, `2:b7`), a rail (`T+`, `2:B-`), or a part pin (`U1.GPIO8`, `U2.SDA`, `D1.A`), and the server picks a free hole for you |
-| `route_nets` | Let the server choose the wires. Give groups of pins, rails or holes that must be one net; it adds the fewest wires, skips what is already connected, and prefers short, straight wires that avoid crossing parts and other wires. In a group with a rail, each pin is wired to the rail rather than chained to another pin. A hole is used exactly; a pin or bare rail lets it pick a free hole. `power: true` also wires every ground and supply pin to a rail of a fitting voltage, choosing the rail nearest the parts and feeding a rail from a USB-powered ESP32 if none is powered. One undo reverts the whole route |
+| `place_part`, `move_part`, `set_part_props`, `remove_part` | Parts (returns pin holes and body clearance for breakouts and switches) |
+| `add_wires`, `move_wire_end`, `set_wire_color`, `remove_wire`, `remove_wires` | Wires. Each end can be a hole (`a12`, `2:b7`), a rail (`T+`, `2:B-`), or a part pin (`U1.GPIO8`, `U2.SDA`, `D1.A`), and the server picks a free hole for you. `remove_wires` deletes multiple wires in one undoable step |
+| `route_nets` | Let the server choose the wires. Give groups of pins, rails or holes that must be one net; it adds the fewest wires, skips what is already connected, and prefers short, straight wires that avoid crossing parts and other wires. In a group with a rail, each pin is wired to the rail rather than chained to another pin. A hole is used exactly; a pin or bare rail lets it pick a free hole. `power: true` also wires every ground and supply pin to the nearest fitting rail, energizing and bridging multiple rail pairs on 2-board layouts when parts span both boards (or when rails are referenced in `nets`), feeding from a USB-powered ESP32 if none is powered. One undo reverts the whole route |
 | `undo`, `redo` | Step through the shared history |
 | `get_user_edits` | What you changed by hand in the viewer |
-| `get_design`, `get_nets` | Read back pins, holes, nets and wires |
-| `check_design` | All checks, plus a summary of the I²C buses (UART hints are among the checks) |
+| `get_design`, `get_nets` | Read back pins, holes, nets and wires (`get_nets` accepts `connected_only: true` to hide single-part unconnected pins) |
+| `check_design` | All checks (with affected holes), layout neatness metrics (crossings, wires over parts including breakout PCBs and switches, wire lengths, power color mismatches), plus a summary of the I²C buses (UART hints are among the checks) |
+| `render_preview` | Headless SVG/PNG preview of the current breadboard layout. Returns a native MCP PNG image (or SVG) with part labels, resistor color bands, optional wire IDs, tidy orthogonal mode, check highlights, and optional `output_path` export |
 | `save_design`, `list_designs`, `open_design` | Keep several designs. Each is saved as `<name>.json` in the designs folder; opening one replaces the current design (undo restores it), so save first if you want to keep it |
 | `get_viewer_url`, `load_design` | Get the viewer link, or replace the design with a design object |
+
+## MCP Prompts
+
+The server also exposes guided MCP prompts for agents:
+
+- `design-circuit`: Step-by-step workflow to plan, place, wire, verify, visually inspect, polish, and save a breadboard circuit.
+- `layout-polish-pass`: Visual and routing cleanup pass using `render_preview`, layout metrics, `move_part`, `set_wire_color`, and routing tools.
+- `debug-circuit`: Systematic electrical and physical troubleshooting workflow using `check_design`, `get_nets`, and `render_preview`.
 
 ## Parts
 
@@ -104,13 +113,14 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
 
 ## What the checks catch
 
-- **Fit:** pins that land in taken holes, under a module, or under the power module's overhang.
+- **Fit & clutter:** pins that land in taken holes, under a module, or under the power module's overhang; physically overlapping part bodies; dangling wire ends; floating resistor leads or button sides; and wire-crossing / wire-over-part neatness metrics.
 - **Strip shorts:** two pins of one part in the same strip, for example a button wired so it's always closed.
 - **Supply problems:**
   - Short circuits.
   - Two supply voltages tied together.
   - A supply back-feeding a USB-powered dev board.
   - Undervoltage, or overvoltage (such as a 3.3 V-only BME280 on 5 V).
+  - Power/ground wire color-coding advisories.
 - **Grounds:** grounds that aren't joined.
 - **I²C:**
   - SDA or SCL not reaching a GPIO.
@@ -122,9 +132,9 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
   - TX wired to the board's TX pin (or RX to RX) instead of crossed.
   - TX and RX shorted together, or tied to a supply or ground.
   - A `Serial1.begin(...)` line with the pins you used.
-- **Risky GPIOs:** strapping pins, USB data pins, UART0, the RGB LED pin, and pins reserved by flash or PSRAM.
-- **LEDs:** no series resistor, wired backwards, or shorted.
-- **Buttons:** wiring hints, such as using `INPUT_PULLUP`.
+- **Risky GPIOs:** strapping pins, USB data pins, UART0, the RGB LED pin, and pins reserved by flash or PSRAM — across all wired nets, not just I²C/UART.
+- **LEDs:** no series resistor, series resistor too low (< 68 Ω) or too high (> 10 kΩ), wired backwards (directly or through a series resistor), or shorted.
+- **Buttons:** supply-to-ground shorts, unconnected sides, and wiring hints such as using `INPUT_PULLUP`.
 
 ## Assumptions to verify
 

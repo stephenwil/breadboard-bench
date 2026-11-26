@@ -22,8 +22,8 @@ export async function startServer({ env = {}, home = fs.mkdtempSync(path.join(os
   await client.connect(transport);
   const call = async (name, args = {}) => {
     const r = await client.callTool({ name, arguments: args });
-    return { text: r.content.map((c) => c.text).join('\n'), isError: !!r.isError };
+    return { text: r.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n'), content: r.content, isError: !!r.isError };
   };
   const port = Number(/:(\d+)\//.exec((await call('get_viewer_url')).text)[1]);
-  return { call, port, home, stop: () => client.close() };
+  return { call, client, port, home, stop: () => client.close() };
 }
