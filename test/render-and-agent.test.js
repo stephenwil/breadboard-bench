@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as M from '../src/model.js';
 import * as R from '../src/render.js';
+import * as C from '../src/cart.js';
 import { startServer } from './helpers/mcp.js';
 
 const codes = (d) => M.analyze(d).checks.map((c) => `${c.level}:${c.code}`);
@@ -136,10 +137,25 @@ test('renderSvg and renderPng produce valid SVG and PNG across modes', () => {
   const pngOut = R.renderPng(d, { boardColor: 'cream', scale: 1 });
   assert.equal(pngOut.buffer.slice(0, 4).toString('hex'), '89504e47');
   assert.ok(pngOut.width > 500 && pngOut.height > 200);
+
+  // Every rendered PNG embeds the design JSON as a lossless iTXt picture cart chunk
+  const decoded = C.decodePngCart(pngOut.buffer);
+  assert.ok(decoded, 'rendered PNG must contain an embedded design cart');
+  assert.equal(decoded.name, 'Split Preview');
+  assert.equal(decoded.parts.length, 3);
+  assert.equal(decoded.wires.length, 2);
+
+  // parseCartBytes handles both PNG carts and raw JSON, and re-encoding is idempotent
+  const reencoded = C.encodePngCart(pngOut.buffer, decoded);
+  assert.deepEqual(C.parseCartBytes(reencoded), decoded);
+  assert.deepEqual(C.parseCartBytes(new TextEncoder().encode(JSON.stringify(decoded))), decoded);
+  const plainPng = R.renderPng(d, { scale: 1, embedDesign: false }).buffer;
+  assert.equal(C.decodePngCart(plainPng), null);
+  assert.throws(() => C.parseCartBytes(plainPng), /does not contain an embedded/i);
 });
 
 // ---------- MCP server integration: render_preview, set_wire_color, remove_wires, get_nets, prompts, HTTP previews ----------
-test('MCP server exposes render_preview, set_wire_color, remove_wires, get_nets filter, body info, and prompts', async () => {
+test('MCP server exposes render_preview, set_wire_color, remove_wires, get_nets filter, body info, cart/switcher HTTP ops, and prompts', async () => {
   const s = await startServer();
   const tmpOut = path.join(os.tmpdir(), `bb-preview-test-${Date.now()}.png`);
   try {
@@ -211,16 +227,47 @@ test('MCP server exposes render_preview, set_wire_color, remove_wires, get_nets 
     assert.equal(svgRes.isError, false);
     assert.match(svgRes.text, /<svg /);
 
-    // HTTP preview endpoints work
+    // HTTP preview endpoints & PNG picture cart round-trip
     const pngHttp = await fetch(`http://127.0.0.1:${s.port}/api/preview.png?tidy=1&scale=1`);
     assert.equal(pngHttp.status, 200);
     assert.equal(pngHttp.headers.get('content-type'), 'image/png');
     const pngBuf = Buffer.from(await pngHttp.arrayBuffer());
     assert.equal(pngBuf.slice(0, 4).toString('hex'), '89504e47');
+    const cartFromHttpPng = C.parseCartBytes(pngBuf);
+    assert.equal(cartFromHttpPng.name, 'Agent Test');
 
     const svgHttp = await fetch(`http://127.0.0.1:${s.port}/api/preview.svg`);
     assert.equal(svgHttp.status, 200);
     assert.match(await svgHttp.text(), /^<svg /);
+
+    // Browser design switcher & cart load/export endpoints
+    const postOp = async (body) => (await fetch(`http://127.0.0.1:${s.port}/api/op`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-breadboard': '1' },
+      body: JSON.stringify(body),
+    })).json();
+
+    const saveRes = await postOp({ op: 'save_design', name: 'saved-from-browser' });
+    assert.equal(saveRes.ok, true);
+    const listRes = await (await fetch(`http://127.0.0.1:${s.port}/api/designs`)).json();
+    assert.ok(listRes.designs.some((d) => d.name === 'saved-from-browser'));
+
+    const cartDesign = M.newDesign({ name: 'Dropped Cart', size: 'half' });
+    M.placePart(cartDesign, { type: 'resistor', at: 'a5', to: 'a9', props: { ohms: 470 } });
+    const loadRes = await postOp({ op: 'load_design', design: cartDesign });
+    assert.equal(loadRes.ok, true);
+    assert.equal(loadRes.result.name, 'Dropped Cart');
+
+    const exportedJson = await (await fetch(`http://127.0.0.1:${s.port}/api/design.json`)).json();
+    assert.equal(exportedJson.name, 'Dropped Cart');
+
+    const openRes = await postOp({ op: 'open_design', name: 'saved-from-browser' });
+    assert.equal(openRes.ok, true);
+    assert.equal(openRes.result.name, 'Agent Test');
+
+    const cartJsRes = await fetch(`http://127.0.0.1:${s.port}/cart.js`);
+    assert.equal(cartJsRes.status, 200);
+    assert.match(await cartJsRes.text(), /parseCartBytes/);
   } finally {
     if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
     await s.stop();

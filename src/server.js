@@ -154,6 +154,21 @@ function userOp(op) {
       const r = mutate((d) => M.routeNets(d, { nets: [refs] }), { by, label: `routed ${refs.join(', ')}` });
       return { added: r.wires.length, notes: r.notes };
     }
+    case 'open_design': {
+      const next = store.openDesign(DESIGNS_DIR, String(op.name || ''));
+      mutate((draft) => { Object.keys(draft).forEach((k) => delete draft[k]); Object.assign(draft, next); }, { by, label: `opened "${next.name}"` });
+      return { name: next.name, parts: next.parts.length, wires: next.wires.length };
+    }
+    case 'save_design': {
+      const as = String(op.name || design.name || 'Untitled').trim() || 'Untitled';
+      const file = store.saveDesign(DESIGNS_DIR, as, design);
+      return { name: M.designFileName(as), title: design.name, file };
+    }
+    case 'load_design': {
+      const next = M.normalizeDesign(op.design);
+      mutate((draft) => { Object.keys(draft).forEach((k) => delete draft[k]); Object.assign(draft, next); }, { by, label: `loaded cart "${next.name}"` });
+      return { name: next.name, parts: next.parts.length, wires: next.wires.length };
+    }
     case 'undo': return undo(by);
     case 'redo': return redo(by);
     default: throw new M.ModelError(`Unknown edit "${op.op}".`);
@@ -162,6 +177,7 @@ function userOp(op) {
 
 // ---------- browser viewer ----------
 const html = fs.readFileSync(new URL('../public/index.html', import.meta.url));
+const cartJs = fs.readFileSync(new URL('./cart.js', import.meta.url));
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const json = (code, v) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(v)); };
@@ -169,7 +185,19 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     return res.end(html);
   }
+  if (req.method === 'GET' && url.pathname === '/cart.js') {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(cartJs);
+  }
   if (req.method === 'GET' && url.pathname === '/api/state') return json(200, view());
+  if (req.method === 'GET' && url.pathname === '/api/designs') return json(200, { folder: DESIGNS_DIR, designs: store.listDesigns(DESIGNS_DIR) });
+  if (req.method === 'GET' && url.pathname === '/api/design.json') {
+    const slug = M.designFileName(design.name || 'design');
+    const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+    if (url.searchParams.get('download') === '1') headers['content-disposition'] = `attachment; filename="${slug}.bb.json"`;
+    res.writeHead(200, headers);
+    return res.end(JSON.stringify(design, null, 2));
+  }
   if (req.method === 'GET' && (url.pathname === '/api/preview.svg' || url.pathname === '/api/preview.png')) {
     const q = url.searchParams;
     const opts = {
@@ -181,11 +209,16 @@ const server = http.createServer((req, res) => {
       header: q.get('header') !== '0' && q.get('header') !== 'false',
       scale: q.get('scale') ? Number(q.get('scale')) : 1.5,
     };
+    const slug = M.designFileName(design.name || 'design');
     if (url.pathname.endsWith('.svg')) {
-      res.writeHead(200, { 'content-type': 'image/svg+xml; charset=utf-8', 'cache-control': 'no-store' });
+      const headers = { 'content-type': 'image/svg+xml; charset=utf-8', 'cache-control': 'no-store' };
+      if (q.get('download') === '1') headers['content-disposition'] = `attachment; filename="${slug}.svg"`;
+      res.writeHead(200, headers);
       return res.end(R.renderSvg(design, opts).svg);
     }
-    res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
+    const headers = { 'content-type': 'image/png', 'cache-control': 'no-store' };
+    if (q.get('download') === '1') headers['content-disposition'] = `attachment; filename="${slug}.bb.png"`;
+    res.writeHead(200, headers);
     return res.end(R.renderPng(design, opts).buffer);
   }
   if (req.method === 'GET' && url.pathname === '/api/events') {
@@ -199,7 +232,7 @@ const server = http.createServer((req, res) => {
     // Only accept same-origin JSON so other web pages can't drive the board.
     if (!String(req.headers['content-type'] || '').startsWith('application/json') || req.headers['x-breadboard'] !== '1') return json(403, { ok: false, error: 'Forbidden' });
     let body = '';
-    req.on('data', (c) => { body += c; if (body.length > 1e5) req.destroy(); });
+    req.on('data', (c) => { body += c; if (body.length > 1e6) req.destroy(); });
     req.on('end', () => {
       try { const result = userOp(JSON.parse(body)); json(200, { ok: true, result }); }
       catch (e) { json(200, { ok: false, error: e instanceof M.ModelError ? e.message : 'That edit failed.' }); if (!(e instanceof M.ModelError)) log(e); }

@@ -64,6 +64,7 @@ A power module needs both rail pairs on one board, so it doesn't fit a joined pa
 - **Tidy wires** draws every wire with a 90° bend instead of a curve. Wires whose runs would overlap are moved a few pixels apart. It changes only how wires are drawn, not the design, and the viewer remembers your choice.
 - **Route power** wires every ground and supply pin to a rail of a fitting voltage (the same as `route_nets` with `power: true`). One undo reverts it.
 - **Undo and redo** cover both your edits and Claude's. Shortcuts: `Ctrl/Cmd+Z`, `Shift+Ctrl/Cmd+Z`.
+- **Designs & picture carts**: switch between saved designs from the header dropdown, **Save** the active design, **Load cart…** or drag and drop a `.json` / `.bb.json` / `.bb.png` file onto the window to load it, or export the current layout as a **JSON** file or a **PNG cart** (`.bb.png`, a normal PNG image that embeds the full design JSON in an `iTXt` chunk).
 
 Every edit goes through the same validation as Claude's tools. A move into a taken hole is refused, with the reason.
 
@@ -83,7 +84,7 @@ Your edits are logged. The next tool call Claude makes tells it there are edits 
 | `get_user_edits` | What you changed by hand in the viewer |
 | `get_design`, `get_nets` | Read back pins, holes, nets and wires (`get_nets` accepts `connected_only: true` to hide single-part unconnected pins) |
 | `check_design` | All checks (with affected holes), layout neatness metrics (crossings, wires over parts including breakout PCBs and switches, wire lengths, power color mismatches), plus a summary of the I²C buses (UART hints are among the checks) |
-| `render_preview` | Headless SVG/PNG preview of the current breadboard layout. Returns a native MCP PNG image (or SVG) with part labels, resistor color bands, optional wire IDs, tidy orthogonal mode, check highlights, and optional `output_path` export |
+| `render_preview` | Headless SVG/PNG preview of the current breadboard layout. Returns a native MCP PNG image (or SVG) with part labels, resistor color bands, optional wire IDs, tidy orthogonal mode, check highlights, and optional `output_path` export. Rendered PNGs automatically embed the full design JSON in a PNG `iTXt` chunk so any `.bb.png` image can be dragged straight back into the viewer |
 | `save_design`, `list_designs`, `open_design` | Keep several designs. Each is saved as `<name>.json` in the designs folder; opening one replaces the current design (undo restores it), so save first if you want to keep it |
 | `get_viewer_url`, `load_design` | Get the viewer link, or replace the design with a design object |
 

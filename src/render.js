@@ -2,6 +2,7 @@
 // Uses the same geometry and palettes as public/index.html so agents see what humans see in the viewer.
 import { Resvg } from '@resvg/resvg-js';
 import * as M from './model.js';
+import { encodePngCart } from './cart.js';
 
 const P = 16;
 const MX = 40;
@@ -384,6 +385,7 @@ export function renderSvg(design, options = {}) {
 
 export function renderPng(design, options = {}) {
   const scale = Math.min(3, Math.max(0.5, Number(options.scale ?? 1.5) || 1.5));
+  const embedDesign = options.embedDesign !== false;
   const rendered = renderSvg(design, options);
   const targetWidth = Math.round(rendered.width * scale);
   const resvg = new Resvg(rendered.svg, {
@@ -391,7 +393,8 @@ export function renderPng(design, options = {}) {
     font: { loadSystemFonts: true, defaultFontFamily: 'DejaVu Sans' },
   });
   const pngData = resvg.render();
-  const buffer = Buffer.from(pngData.asPng());
+  const raw = pngData.asPng();
+  const buffer = Buffer.from(embedDesign ? encodePngCart(raw, M.normalizeDesign(design)) : raw);
   return {
     buffer,
     width: pngData.width,

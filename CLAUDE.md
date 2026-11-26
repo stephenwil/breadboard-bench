@@ -19,15 +19,16 @@ Sessions here are for developing the server, model and viewer. Circuit design re
   - `analyze()`: builds the netlist and runs every check.
   - `layoutMetrics()`: computes wire crossings, wires over parts (covered holes and part body AABBs), wire lengths, and power-rail color mismatches.
   - `buildView()`: the JSON the browser renders.
-- `src/render.js`: headless SVG and PNG renderer (via `@resvg/resvg-js`) matching `public/index.html`'s geometry and palettes, with resistor color bands, part labels, optional wire ID badges, check highlights, and header/footer bars. Backs `render_preview` and `/api/preview.{svg,png}`.
+- `src/cart.js`: zero-dependency pure-ESM PNG picture-cart codec (runs in both Node and browsers). Encodes/decodes design JSON inside an uncompressed UTF-8 PNG `iTXt` chunk (`keyword: "breadboard-bench"`), so `.bb.png` previews are also self-contained loadable cartridges.
+- `src/render.js`: headless SVG and PNG renderer (via `@resvg/resvg-js`) matching `public/index.html`'s geometry and palettes, with resistor color bands, part labels, optional wire ID badges, check highlights, and header/footer bars. `renderPng()` embeds the normalized design JSON via `src/cart.js` by default. Backs `render_preview` and `/api/preview.{svg,png}`.
 - `src/server.js`: the MCP server (stdio) plus an HTTP server for the viewer.
-  - The HTTP side serves `/`, `/api/state`, `/api/preview.svg`, `/api/preview.png`, SSE on `/api/events`, and `POST /api/op` for browser edits. That endpoint requires the `x-breadboard: 1` header.
+  - The HTTP side serves `/`, `/cart.js`, `/api/state`, `/api/designs`, `/api/design.json`, `/api/preview.svg`, `/api/preview.png`, SSE on `/api/events`, and `POST /api/op` for browser edits (including `open_design`, `save_design`, `load_design`). That endpoint requires the `x-breadboard: 1` header.
   - Registers MCP tools (including `render_preview`, `set_wire_color`, `remove_wires`, and `get_nets({ connected_only })`), server instructions, and guided MCP prompts (`design-circuit`, `layout-polish-pass`, `debug-circuit`).
   - Holds the undo and redo history and the log of user edits.
   - Saves each Claude Code session's design to `~/.breadboard-bench/sessions/<CLAUDE_CODE_SESSION_ID>.json`, created on the first edit. With no session id (Claude Desktop) it uses `~/.breadboard-bench/design.json`. `BREADBOARD_DESIGN` overrides both. The choice is `designPathFor()` in `designs.js`. For the shared file only: if it is missing and the pre-rename `~/.breadboard-mcp/design.json` exists, the old one is loaded (and saved to the new path on the next change).
   - `guardExternal()` runs before every edit, undo and redo. If another process changed the file since this server last read or wrote it (`seen`, a hash of the file's content), the server reloads it, clears the history and refuses the edit with a `ModelError`; nothing is overwritten.
 - `src/designs.js`: named designs, one `<name>.json` per design in `~/.breadboard-bench/designs` (override with `BREADBOARD_DESIGNS_DIR`). Backs the `save_design`, `list_designs` and `open_design` tools. It also holds `designPathFor()` and `designLabel()`, which choose the live design file and its short name (shown in the viewer header and by `get_viewer_url`). File names go through `designFileName()` in `model.js` so a name can't escape the folder. The live working copy is a separate file per session, as above.
-- `public/index.html`: the viewer, in a single file with no build step. It draws the board from `buildView()` output and sends edits to `/api/op`.
+- `public/index.html`: the viewer, in a single file with no build step. It draws the board from `buildView()` output, sends edits to `/api/op`, and includes a saved-design switcher, Save, Load cart / drag-and-drop (`.json` / `.bb.json` / `.bb.png`), and PNG cart / JSON exports.
 - `site/index.html`: the marketing page, a single static file deployed to GitHub Pages by `.github/workflows/pages.yml`. It is separate from `public/`, which the server serves. Keep its part list, checks, install commands and limitations in step with the model and README, and update it when a feature ships or a roadmap item lands. It is excluded from the npm package via `files` in `package.json`.
 - `test/model.test.js`, `test/designs.test.js`, `test/route.test.js`, `test/render-and-agent.test.js`: model, saved-design, routing, rendering, and agent MCP tests, run with `npm test`.
 - `test/session.test.js`, `test/helpers/mcp.js`: start the real server over MCP against a temp `HOME` to test the file choice and the conflict guard. `npm test` runs them with the rest, about a minute in all.
@@ -65,6 +66,5 @@ Deferred from reviews; none loses data today. Fix when touching the area.
 - More parts: Pico, DHT22, relay, potentiometer.
 - An auto-layout helper that suggests where to place parts.
 - Cleaning up old session design files.
-- A design switcher in the viewer.
 - Exporting a wiring list or schematic.
 - An ammeter or LED simulation in the viewer. The earlier claude.ai prototype had these.
