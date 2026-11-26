@@ -15,18 +15,22 @@ Sessions here are for developing the server, model and viewer. Circuit design re
   - Board geometry and hole parsing (`a12`, `T+5`, `2:b7` for board 2).
   - The part library (`LIBRARY`) and footprints.
   - Edit operations, which throw `ModelError` with messages written for the user.
-  - `routeNets()` and `scoreWire()`: auto-routing behind the `route_nets` tool. It joins groups of endpoints with the fewest wires, adding each through `addWire`. In a group with a rail endpoint, each wire must land on the rail (pins are never chained), falling back to any pair if no rail hole is reachable. `scoreWire` is the neatness cost (length, straight bonus, penalty per hole under a part, penalty per crossing), with the weights in `ROUTE_WEIGHTS`. `power: true` builds ground and supply groups from the parts' pin roles, choosing a rail by its total distance to the endpoints it serves. Spec and plan: `docs/superpowers/`.
+  - `routeNets()` and `scoreWire()`: auto-routing behind the `route_nets` tool. It joins groups of endpoints with the fewest wires, adding each through `addWire`. In a group with a rail endpoint, each wire must land on the rail (pins are never chained), falling back to any pair if no rail hole is reachable. `scoreWire` is the neatness cost (length, straight bonus, penalty per hole under a part or crossing upright/tactile bodies, penalty per crossing), with the weights in `ROUTE_WEIGHTS`. `power: true` builds ground and supply groups from the parts' pin roles, energizing/bridging multiple rail pairs on 2-board layouts when parts span both boards or rails are referenced in `nets`. Spec and plan: `docs/superpowers/`.
   - `analyze()`: builds the netlist and runs every check.
+  - `layoutMetrics()`: computes wire crossings, wires over parts (covered holes and part body AABBs), wire lengths, and power-rail color mismatches.
   - `buildView()`: the JSON the browser renders.
+- `src/cart.js`: zero-dependency pure-ESM PNG picture-cart codec (runs in both Node and browsers). Encodes/decodes design JSON inside an uncompressed UTF-8 PNG `iTXt` chunk (`keyword: "breadboard-bench"`), so `.bb.png` previews are also self-contained loadable cartridges.
+- `src/render.js`: headless SVG and PNG renderer (via `@resvg/resvg-js`) matching `public/index.html`'s geometry and palettes, with resistor color bands, part labels, optional wire ID badges, check highlights, and header/footer bars. `renderPng()` embeds the normalized design JSON via `src/cart.js` by default. Backs `render_preview` and `/api/preview.{svg,png}`.
 - `src/server.js`: the MCP server (stdio) plus an HTTP server for the viewer.
-  - The HTTP side serves `/`, `/api/state`, SSE on `/api/events`, and `POST /api/op` for browser edits. That endpoint requires the `x-breadboard: 1` header.
+  - The HTTP side serves `/`, `/cart.js`, `/api/state`, `/api/designs`, `/api/design.json`, `/api/preview.svg`, `/api/preview.png`, SSE on `/api/events`, and `POST /api/op` for browser edits (including `open_design`, `save_design`, `load_design`). That endpoint requires the `x-breadboard: 1` header.
+  - Registers MCP tools (including `render_preview`, `set_wire_color`, `remove_wires`, and `get_nets({ connected_only })`), server instructions, and guided MCP prompts (`design-circuit`, `layout-polish-pass`, `debug-circuit`).
   - Holds the undo and redo history and the log of user edits.
   - Saves each Claude Code session's design to `~/.breadboard-bench/sessions/<CLAUDE_CODE_SESSION_ID>.json`, created on the first edit. With no session id (Claude Desktop) it uses `~/.breadboard-bench/design.json`. `BREADBOARD_DESIGN` overrides both. The choice is `designPathFor()` in `designs.js`. For the shared file only: if it is missing and the pre-rename `~/.breadboard-mcp/design.json` exists, the old one is loaded (and saved to the new path on the next change).
   - `guardExternal()` runs before every edit, undo and redo. If another process changed the file since this server last read or wrote it (`seen`, a hash of the file's content), the server reloads it, clears the history and refuses the edit with a `ModelError`; nothing is overwritten.
 - `src/designs.js`: named designs, one `<name>.json` per design in `~/.breadboard-bench/designs` (override with `BREADBOARD_DESIGNS_DIR`). Backs the `save_design`, `list_designs` and `open_design` tools. It also holds `designPathFor()` and `designLabel()`, which choose the live design file and its short name (shown in the viewer header and by `get_viewer_url`). File names go through `designFileName()` in `model.js` so a name can't escape the folder. The live working copy is a separate file per session, as above.
-- `public/index.html`: the viewer, in a single file with no build step. It draws the board from `buildView()` output and sends edits to `/api/op`.
+- `public/index.html`: the viewer, in a single file with no build step. It draws the board from `buildView()` output, sends edits to `/api/op`, and includes a saved-design switcher, Save, Load cart / drag-and-drop (`.json` / `.bb.json` / `.bb.png`), and PNG cart / JSON exports.
 - `site/index.html`: the marketing page, a single static file deployed to GitHub Pages by `.github/workflows/pages.yml`. It is separate from `public/`, which the server serves. Keep its part list, checks, install commands and limitations in step with the model and README, and update it when a feature ships or a roadmap item lands. It is excluded from the npm package via `files` in `package.json`.
-- `test/model.test.js`, `test/designs.test.js`, `test/route.test.js`: model, saved-design and routing tests, run with `npm test`.
+- `test/model.test.js`, `test/designs.test.js`, `test/route.test.js`, `test/render-and-agent.test.js`: model, saved-design, routing, rendering, and agent MCP tests, run with `npm test`.
 - `test/session.test.js`, `test/helpers/mcp.js`: start the real server over MCP against a temp `HOME` to test the file choice and the conflict guard. `npm test` runs them with the rest, about a minute in all.
 - `.github/workflows/test.yml`: runs `npm ci && npm test` on Node 18 and 22 for every pull request and push to `main`.
 
@@ -53,9 +57,8 @@ Sessions here are for developing the server, model and viewer. Circuit design re
 Deferred from reviews; none loses data today. Fix when touching the area.
 - Tests: temp `HOME` folders and design dirs made by `test/helpers/mcp.js` and `test/session.test.js` are never removed. The viewer's toast for a refused browser edit was not checked by eye.
 - Routing (`model.js`):
-  - `power: true` with nothing to power returns an empty success with no hint.
-  - `scoreWire` recomputes footprints for every candidate pair, and `analyze()` runs once per added wire. Fine at current sizes.
-  - The split-rails and joined-boards routing tests only check column <= 32 and "no errors", not which rail is fed.
+  - `analyze()` runs once per added wire during `routeNets()` (geometry context is cached once per route). Fine at current sizes.
+  - The split-rails routing test only checks column <= 32, not which rail is fed.
 - `CLAUDE_CODE_SESSION_ID` is assumed to stay the same when a session is resumed. It did across a restart; not seen on `--resume`.
 
 ## Ideas not done yet
@@ -63,6 +66,5 @@ Deferred from reviews; none loses data today. Fix when touching the area.
 - More parts: Pico, DHT22, relay, potentiometer.
 - An auto-layout helper that suggests where to place parts.
 - Cleaning up old session design files.
-- A design switcher in the viewer.
 - Exporting a wiring list or schematic.
 - An ammeter or LED simulation in the viewer. The earlier claude.ai prototype had these.

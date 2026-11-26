@@ -57,16 +57,38 @@ h2{font-size:.8rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
 label.prop{display:flex;gap:8px;align-items:center;font-size:.92rem}
 select{font:inherit;font-size:.9rem;padding:4px 8px;border-radius:8px;border:1px solid var(--panel-line);background:var(--mat);color:var(--ink)}
-.toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,10px);max-width:min(92vw,560px);background:var(--ink);color:var(--panel);padding:10px 16px;border-radius:10px;font-size:.93rem;line-height:1.4;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}
+.toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,10px);max-width:min(92vw,560px);background:var(--ink);color:var(--panel);padding:10px 16px;border-radius:10px;font-size:.93rem;line-height:1.4;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:20}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 kbd{font-family:inherit;font-size:.8rem;border:1px solid var(--panel-line);border-radius:4px;padding:0 4px}
+.header-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto}
+.header-tools select{max-width:220px;background:var(--panel)}
+.live{margin-left:6px;font-size:.88rem;color:var(--ink-soft);display:flex;align-items:center;gap:6px}
+.drop-overlay{position:fixed;inset:0;background:rgba(20,32,33,.72);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:50;pointer-events:none}
+.drop-overlay[hidden]{display:none}
+.drop-box{background:var(--panel);color:var(--ink);border:2px dashed var(--copper);border-radius:16px;padding:28px 36px;text-align:center;box-shadow:0 18px 40px rgba(0,0,0,.28)}
+.drop-box h2{font-size:1.1rem;letter-spacing:.02em;text-transform:none;color:var(--ink);margin:0 0 6px}
+.drop-box p{margin:0;color:var(--ink-soft);font-size:.95rem}
 </style>
 </head>
 <body>
+<div class="drop-overlay" id="drop-overlay" hidden>
+  <div class="drop-box">
+    <h2>Drop a circuit cart (.json or .bb.png)</h2>
+    <p>Loads straight onto the bench (undoable with Ctrl/Cmd+Z)</p>
+  </div>
+</div>
 <header>
   <h1 id="title">Breadboard Bench</h1>
   <span class="meta" id="meta"></span>
-  <span class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></span>
+  <div class="header-tools">
+    <select id="design-select" aria-label="Open saved design" title="Switch to a saved design"></select>
+    <button class="btn" id="save-design" title="Save current design to your designs folder">Save</button>
+    <button class="btn" id="load-cart" title="Load a .json, .bb.json, or .bb.png circuit cart">Load cart…</button>
+    <input type="file" id="cart-file" accept=".json,.bb.json,.png,.bb.png,application/json,image/png" hidden>
+    <button class="btn" id="export-png" title="Download a .bb.png picture cart (PNG preview with embedded design JSON)">PNG cart</button>
+    <button class="btn" id="export-json" title="Download the current design as .bb.json">JSON</button>
+    <span class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></span>
+  </div>
 </header>
 <div class="toolbar">
   <button class="btn" id="t-select" aria-pressed="true">Select</button>
@@ -81,14 +103,14 @@ kbd{font-family:inherit;font-size:.8rem;border:1px solid var(--panel-line);borde
   <button class="btn" id="tidy" aria-pressed="false" title="Draw wires with 90° bends instead of curves">Tidy wires</button>
   <span id="boardcolours" style="display:flex;gap:6px" role="group" aria-label="Board colour"></span>
   <button class="btn" id="route-power" title="Wire every ground and supply pin to a rail of the right voltage">Route power</button>
-  <span class="hint" id="hint">Drag parts and wire ends to move them. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.</span>
+  <span class="hint" id="hint">Drag parts, wire ends, or drop a .json/.bb.png cart. <kbd>R</kbd> rotates, <kbd>Del</kbd> removes.</span>
 </div>
 <div class="boardwrap">
   <svg id="board" role="img" aria-label="Breadboard layout">
     <defs><filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3"/></filter></defs>
     <g id="L-board"></g><g id="L-zone"></g><g id="L-body"></g><g id="L-wires"></g><g id="L-pins"></g><g id="L-hl"></g><g id="L-ui"></g>
   </svg>
-  <div class="empty" id="empty" hidden><span>Waiting for a design. Ask Claude to lay out a circuit.</span></div>
+  <div class="empty" id="empty" hidden><span>Waiting for a design. Ask Claude to lay out a circuit, or drop a .json / .bb.png cart here.</span></div>
 </div>
 <main>
   <section><h2 id="checks-title">Checks</h2><ul class="checks" id="checks"></ul></section>
@@ -468,9 +490,98 @@ document.addEventListener('keydown', (e) => {
   if ((e.key === 'r' || e.key === 'R') && sel.type === 'part'){ const p = state.parts.find((x) => x.id === sel.id); if (['dual-header', 'single-header'].includes(p.kind)) op({ op: 'move_part', id: p.id, rotation: p.rotation === 180 ? 0 : 180 }); }
 });
 
+// ---------- design switcher & cart loading ----------
+let cartCodecPromise = null;
+const loadCartCodec = () => (cartCodecPromise ||= import('/cart.js'));
+
+async function refreshDesigns(){
+  try {
+    const r = await fetch('/api/designs');
+    if (!r.ok) return;
+    const { designs = [] } = await r.json();
+    const selEl = $('#design-select');
+    const opts = [`<option value="">Saved designs (${designs.length})…</option>`];
+    for (const d of designs) {
+      opts.push(`<option value="${esc(d.name)}">${esc(d.title || d.name)} (${d.parts}p/${d.wires}w)</option>`);
+    }
+    selEl.innerHTML = opts.join('');
+  } catch { /* offline */ }
+}
+
+$('#design-select').addEventListener('change', async (e) => {
+  const name = e.target.value;
+  if (!name) return;
+  const r = await op({ op: 'open_design', name });
+  e.target.value = '';
+  if (r) toast(`Opened "${r.name}" (${r.parts} parts, ${r.wires} wires).`);
+});
+
+$('#save-design').onclick = async () => {
+  const current = state?.name || 'Untitled';
+  const name = window.prompt('Save design as:', current);
+  if (!name || !name.trim()) return;
+  const r = await op({ op: 'save_design', name: name.trim() });
+  if (r) {
+    toast(`Saved "${r.name}" to designs folder.`);
+    refreshDesigns();
+  }
+};
+
+async function loadCartFromBytes(bytes, label = 'cart'){
+  try {
+    const { parseCartBytes } = await loadCartCodec();
+    const design = parseCartBytes(new Uint8Array(bytes));
+    const r = await op({ op: 'load_design', design });
+    if (r) toast(`Loaded "${r.name}" from ${label} (${r.parts} parts, ${r.wires} wires).`);
+  } catch (err) {
+    toast(err?.message || 'Could not load that file as a Breadboard Bench cart.');
+  }
+}
+
+$('#load-cart').onclick = () => $('#cart-file').click();
+$('#cart-file').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  await loadCartFromBytes(await file.arrayBuffer(), file.name);
+});
+
+$('#export-json').onclick = () => { window.location.href = '/api/design.json?download=1'; };
+$('#export-png').onclick = () => {
+  const q = new URLSearchParams({ board: boardColour, tidy: tidy ? '1' : '0', download: '1' });
+  window.location.href = `/api/preview.png?${q.toString()}`;
+};
+
+let dragDepth = 0;
+const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+window.addEventListener('dragenter', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  $('#drop-overlay').hidden = false;
+});
+window.addEventListener('dragover', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+window.addEventListener('dragleave', (e) => {
+  if (!hasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) $('#drop-overlay').hidden = true;
+});
+window.addEventListener('drop', async (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  $('#drop-overlay').hidden = true;
+  const file = e.dataTransfer.files?.[0];
+  if (file) await loadCartFromBytes(await file.arrayBuffer(), file.name);
+});
+
 function connect(){
   const es = new EventSource('/api/events');
-  es.onopen = () => { $('#live').classList.add('on'); $('#live-text').textContent = 'Live'; };
+  es.onopen = () => { $('#live').classList.add('on'); $('#live-text').textContent = 'Live'; refreshDesigns(); };
   es.onmessage = (e) => { state = JSON.parse(e.data); if (!drag) render(); };
   es.onerror = () => { $('#live').classList.remove('on'); $('#live-text').textContent = 'Reconnecting'; };
 }
